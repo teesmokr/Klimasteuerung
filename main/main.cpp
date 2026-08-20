@@ -145,12 +145,19 @@ void handleApiNight(AsyncWebServerRequest *request);
 static bool apiAuthOk(AsyncWebServerRequest *request);
 
 // room temperature history: one sample every 5 minutes, RAM-only ring (24h)
+// plus a coarse 30-minute ring covering 7 days
 #define HIST_LEN 288
+#define HIST7_LEN 336
 #define HIST_NONE -128
 int8_t hist[HIST_LEN]; // temperature * 2 (celsius), HIST_NONE = no sample
+int8_t hist7[HIST7_LEN];
 uint16_t hist_head = 0;
+uint16_t hist7_head = 0;
 bool hist_ready = false;
 unsigned long lastHistSample = 0;
+float hist7_sum = 0;
+uint8_t hist7_cnt = 0;
+uint8_t hist7_ticks = 0;
 void checkHistory();
 void handleApiHistory(AsyncWebServerRequest *request);
 
@@ -1230,6 +1237,10 @@ void checkHistory()
     {
       hist[i] = HIST_NONE;
     }
+    for (uint16_t i = 0; i < HIST7_LEN; i++)
+    {
+      hist7[i] = HIST_NONE;
+    }
     hist_ready = true;
   }
   if (lastHistSample != 0 && millis() - lastHistSample < 300000UL)
@@ -1242,27 +1253,50 @@ void checkHistory()
     if (t > -40 && t < 60)
     {
       v = (int8_t)lroundf(t * 2.0f);
+      hist7_sum += t;
+      hist7_cnt++;
     }
   }
   hist[hist_head] = v;
   hist_head = (hist_head + 1) % HIST_LEN;
+  // every 6th 5-minute tick, push the 30-minute average into the 7-day ring
+  hist7_ticks++;
+  if (hist7_ticks >= 6)
+  {
+    hist7_ticks = 0;
+    int8_t avg = HIST_NONE;
+    if (hist7_cnt > 0)
+    {
+      avg = (int8_t)lroundf((hist7_sum / hist7_cnt) * 2.0f);
+    }
+    hist7_sum = 0;
+    hist7_cnt = 0;
+    hist7[hist7_head] = avg;
+    hist7_head = (hist7_head + 1) % HIST7_LEN;
+  }
 }
 
 void handleApiHistory(AsyncWebServerRequest *request)
 {
   if (!apiAuthOk(request))
     return;
+  bool week = request->hasArg(F("r")) && request->arg(F("r")) == "7d";
+  const int8_t *buf = week ? hist7 : hist;
+  uint16_t len = week ? HIST7_LEN : HIST_LEN;
+  uint16_t head = week ? hist7_head : hist_head;
   String json;
-  json.reserve(HIST_LEN * 5 + 32);
-  json += F("{\"i\":300,\"d\":\"");
-  for (uint16_t n = 0; n < HIST_LEN; n++)
+  json.reserve(len * 5 + 32);
+  json += F("{\"i\":");
+  json += week ? 1800 : 300;
+  json += F(",\"d\":\"");
+  for (uint16_t n = 0; n < len; n++)
   {
-    int8_t v = hist_ready ? hist[(hist_head + n) % HIST_LEN] : HIST_NONE;
+    int8_t v = hist_ready ? buf[(head + n) % len] : HIST_NONE;
     if (v != HIST_NONE)
     {
       json += String(v / 2.0f, 1);
     }
-    if (n < HIST_LEN - 1)
+    if (n < len - 1)
     {
       json += ',';
     }
