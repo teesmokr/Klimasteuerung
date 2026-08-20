@@ -1,164 +1,104 @@
-**mitsubishi2MQTT**
-ESP8266/ESP32 module to control Mitsubishi Electric HVAC unit. Support control with Home Assistant, buit-in web app and MQTT.
+# Klimasteuerung
 
-![build status](https://github.com/dzungpv/mitsubishi2MQTT/actions/workflows/build.yml/badge.svg)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/dzungpv/mitsubishi2MQTT)
+**Moderne Weboberfläche für Mitsubishi-Klimaanlagen auf ESP32/ESP8266 — mit Mehrgeräte-Steuerung (Master/Slave), Zeitplänen, MQTT und Home-Assistant-Anbindung.**
 
-***
+Basiert auf [dzungpv/mitsubishi2MQTT](https://github.com/dzungpv/mitsubishi2MQTT) — die Klimaanlage wird über den `CN105`-Stecker der Innen­einheit angeschlossen und per WLAN steuerbar.
 
-## Screenshots:
-| ![Main](https://github.com/dzungpv/mitsubishi2MQTT/blob/main/images/ha_ui_climate.jpeg) | ![Control](https://github.com/dzungpv/mitsubishi2MQTT/blob/main/images/control_page.jpeg) | ![Config](https://github.com/dzungpv/mitsubishi2MQTT/blob/main/images/config_page.jpeg) |
-| --------------------------------------- | --------------------------------------- | --------------------------------------- |                                
-| ![Init](https://github.com/dzungpv/mitsubishi2MQTT/blob/main/images/ha_ui_mqtt.jpeg) | ![Unit](https://github.com/dzungpv/mitsubishi2MQTT/blob/main/images/unit_page.jpeg) | ![Status](https://github.com/dzungpv/mitsubishi2MQTT/blob/main/images/status_page.jpeg) |
+made with ❤ in Lingen
 
 ***
 
-## Features:
- - Initial config: WIFI AP mode and web portal
- - Web interface for configuration, status and control, firmware upgrade
- - Homeassistant autodiscovery and control with MQTT
- - Control with MQTT
- - Web server can be disable/enable after MQTT connected
- - Multilanguages, user can change in SETUP->UNIT or choose in initial setup
+## Screenshots
+
+| Steuerung | Dark Mode | Zeitpläne |
+| --- | --- | --- |
+| ![Steuerung](images/webui_control_light.png) | ![Dark Mode](images/webui_control_dark.png) | ![Zeitpläne](images/webui_timers.png) |
+
+| Hauptmenü | Status |
+| --- | --- |
+| ![Menü](images/webui_menu.png) | ![Status](images/webui_status.png) |
 
 ***
 
-## Supported Mitsubishi Electrict Units
-Basically, if the unit has a [`CN105`](https://github.com/dzungpv/mitsubishi2MQTT/blob/main/hardware/CN105.jpg) header on the main board, it should
-work. The [HeatPump
-wiki](https://github.com/SwiCago/HeatPump/wiki/Supported-models) has a long confirmed list.
+## Features
 
-The same [`CN105`](https://github.com/dzungpv/mitsubishi2MQTT/blob/main/hardware/CN105.jpg) connector is used by the Mitsubishi KumoCloud remotes, which
-have a
-[compatibility list](https://www.mitsubishicomfort.com/themes/custom/MitsubishiMegaSite/src/pdf/M_Submittal_kumo_cloud.pdf)
-available.
-
-The software and hardware has been tested by the author for 5 years on the following units:
-* `MSZ-HL25VA`
-* `MSZ-GE25VA`
-* `MSY-GM24VA`
-
-## Demo Circuit
-
-<img src="https://github.com/dzungpv/mitsubishi2MQTT/blob/main/hardware/CN105_ESP8266.png"/>
-
-This circuit using by the author (ESP8266), here is some [boards](https://github.com/dzungpv/mitsubishi2MQTT/blob/main/hardware/Before_Install.jpg) before install.
-More pictures in [`hardware`](https://github.com/dzungpv/mitsubishi2MQTT/tree/main/hardware) folder.
-
-You can also use `ESP32` (including ESP32-S2, ESP32-S3 and ESP32-C3) module for more processing power:
-- ESP32 by default app use **UART0** (TX - GPIO 1, RX - GPIO 3)
-- ESP32-S2 by default app use **UART0** (TX - GPIO 43, RX - GPIO 44)
-- ESP32-S3 by default app use **UART0** (TX - GPIO 43, RX - GPIO 44)
-- ESP32-C3 by default app use **UART0** (TX - GPIO 21, RX - GPIO 20)
-- You can assign any compatible pin in the SETUP->OTHERS to use custom pin, example TX: 26, RX: 27, check ESP32 manual for pin.
-When TX and RX set it will use **UART1** port. 
-- Better not using UART0, it is default for logs and flash the chip.
+- **Thermostat-Dial im Home-Assistant-Stil**: Zieltemperatur per Drag am Ring oder über −/+ einstellen, Farbwechsel je nach Modus (Kühlen blau, Heizen orange, Entfeuchten türkis, Auto grün), Live-Updates ohne Neuladen (Server-Sent-Events + Fetch-API)
+- **Mehrere Geräte, eine Oberfläche**: Auf einem Gerät (Master) weitere Einheiten per Name + IP hinterlegen (⚙ in der Tab-Leiste) — der Browser steuert die anderen ESPs direkt über deren JSON-API, ohne den Master zu belasten
+- **Zeitpläne** (bis zu 8 Regeln, laufen auf dem Gerät selbst — kein Browser nötig):
+  - Wochentage (Mo–So) **oder** „alle N Tage" mit Startdatum (z. B. *jeden 2. Tag von 8–10 Uhr Schlafzimmer auf 21° kühlen*)
+  - Zeitfenster von/bis, Modus, Zieltemperatur, optional „nach Ablauf ausschalten"
+  - Steuert auch die anderen hinterlegten Geräte (per HTTP auf deren API)
+- **Modernes Design**: Card-Layout, automatischer Hell-/Dunkelmodus, responsiv für Handy und Desktop, keine externen Ressourcen (funktioniert auch offline im AP-Modus)
+- **JSON-API**: `GET /api/status`, `POST /api/control`, `GET|POST /api/devices`, `GET|POST /api/schedules` (CORS-freigegeben)
+- Alles Weitere vom Original: Home-Assistant-Autodiscovery, MQTT-Steuerung, OTA-Firmware-Update, Erstkonfiguration per WLAN-Access-Point, Login-Schutz, mehrsprachige Systemseiten
 
 ***
 
-## Attention:
-:warning: You have to open the indoor unit to have access to the `CN105` port. You should disconnected the main power before install the module. 
-Faulty handling may cause leakage of water, electric shock or fire! :warning:
-***
+## Erste Schritte
 
-## Parts
+1. **Flashen** (einmalig per USB): [esptool-js](https://espressif.github.io/esptool-js/) im Chrome/Edge-Browser öffnen, ESP verbinden und die passende Datei bei Flash-Adresse `0x0` flashen:
+   - ESP32: `firmware.factory.bin` (aus `.pio/build/ESP32DEV/`)
+   - Wemos D1 Mini / ESP-01: `firmware.bin` der jeweiligen Build-Umgebung
+2. **Verbinden**: Nach dem ersten Start öffnet das Gerät ein WLAN namens `HVAC-XXXXXXXXXXXX`. Damit verbinden — das Setup öffnet sich automatisch (sonst `http://8.8.8.8` aufrufen).
+3. **Einrichten**: WLAN-Zugangsdaten (und optional MQTT) eintragen, speichern, neu starten. Danach ist das Gerät unter `http://hvac-xxxxxxxxxxxx.local` bzw. seiner IP erreichbar.
+4. **Weitere Geräte verbinden**: Auf dem Wunsch-Master unter *Steuerung* → ⚙ die anderen Einheiten mit Name + IP hinzufügen. Danach oben per Tab umschalten.
+5. **Zeitpläne**: Im Hauptmenü unter *Zeitpläne* Regeln anlegen. Die Uhrzeit kommt per NTP; Zeitzone und NTP-Server stehen unter *Einstellungen → Sonstiges*.
 
-### Parts required to make a CN105 female connector
+> ⚠️ **Achtung**: Für den Anschluss muss die Inneneinheit geöffnet werden (`CN105`-Stecker auf der Hauptplatine). Vorher unbedingt die Stromversorgung trennen — unsachgemäßer Umgang kann zu Wasserschäden, Stromschlag oder Brand führen!
 
-- PAP-05V-S CONN HOUSING PA 5POS 2MM WHITE 
-    - Digi-Key Part Number 	455-1489-ND 
-    - <https://www.digikey.com/product-detail/en/jst-sales-america-inc/PAP-05V-S/455-1489-ND/759977>
-- SPHD-002T-P0.5  CONN TERM PHD CRIMP 24-28AWG TIN  
-    - Digi-Key Part Number 	455-1313-1-ND
-    - <https://www.digikey.com/product-detail/en/jst-sales-america-inc/SPHD-002T-P0.5/455-1313-1-ND/608809>
-- JUMPER SPHD-001T-P0.5 X2 12" (pre-crimped alternative to 455-1313-1-ND connectors)
-    - Digi-Key Part Number    455-3086-ND
-    - <https://www.digikey.co.uk/product-detail/en/jst-sales-america-inc/APAPA22K305/455-3086-ND/6009462>
-
-### Other part suggestions
-
-- Premade pigtails
-    - <https://m.aliexpress.com/item/1005002904897793.html> select 5P option
-- ESP-8266 Wemos D1 Mini
-    - <https://m.aliexpress.com/item/1005005121150737.htm>
-***
-
-## How to use:
- - Step 1: Flash the sketch with flash size include SPIFFS option.
- - Step 2: Connect to device AP with name HVAC-XXXXXXXXXXXX (XXXX... 12 character MAC address)
- - Step 3: You should be automatically redirected to the web portal or go to 192.168.4.1 or 8.8.8.8 (version later than 2025.02.08)
- - Step 4: Set Wifi information, mqtt(optional), language and save & reboot. Fall back to AP mode if WiFi connection fails (AP password sets to default SSID name from step 2).
- - Step 5: Connect to the device I with local domain: HVAC-XXXXXXXXXXXX.local
- - Step 6: (optional): Set MQTT information for use with Home Assistant
- - Step 7: (optional): Set Login password to prevent unwanted access in SETUP->ADVANCE->Login Password
- - Step 8: (optional): Turn off heat mode or quiet mode in SETUP->UNIT
-
-Nightly builds are available for select platforms via GitHub Actions. Go to [the workflow](https://github.com/dzungpv/mitsubishi2MQTT/actions/workflows/build.yml), select the latest build, then check the **Artifacts** section. 
+> **Hinweis Login**: Ist auf einem Gerät ein Login-Passwort gesetzt, lässt es sich aus Sicherheitsgründen nicht von einem anderen Gerät aus fernsteuern (Cookie-Authentifizierung). Im Heimnetz ohne Gerätepasswörter funktioniert die Mehrgeräte-Steuerung ohne Einschränkung.
 
 ***
 
-## How to build code from source:
-  - ESP IDF (Recomended): clone the project with --recursive tag: ```git clone https://github.com/dzungpv/mitsubishi2MQTT.git --recursive```, Install [ESP IDF 4.4.6 ](https://docs.espressif.com/projects/esp-idf/en/v4.4/esp32/get-started/index.html),
-  set the target ```idf.py set-target esp32|esp32s2|esp32s3|esp32c3```, and run command to build: ```idf.py build```, flash to the chip with command: ```idf.py flash```
-  - Arduino: Intall require libraries (name and path in platformio.ini), rename file main.cpp in main folder to main.ino, open it and build
-  - Platformio: Install, open it and choose a variant to build
+## Unterstützte Geräte
 
-***
-## How to flash pre-build bin file:
-### ESP32, ESP32-S2, ESP32-S3 and ESP32-C3
- - Download latest release bin file `mitsubishi2MQTT_ESP32_IDF.bin.zip` for ESP32 and exact it.
- - Flash `mitsubishi2MQTT_ESP32_IDF.bin` with esptool.py with command: ```esptool.py -p PORT -b 460800 --before default_reset --after no_reset --chip esp32 write_flash --flash_mode dio --flash_size keep --flash_freq 40m 0x0 mitsubishi2MQTT_ESP32_IDF.bin```
- - If you do not want to install EspTool, just use EspTool web with Chrome or Edge browser here: https://espressif.github.io/esptool-js/, after connected, choose file: `mitsubishi2MQTT_ESP32_IDF.bin` and then enter `Flash Address` 0x0 and press `Program`.
- - With ESP32-S2, ESP32-S3 and ESP32-C3, replace `ESP32` with ESP32S2, ESP32S3, ESP32C3 in file name and command above to flash it.
-### ESP8266:
- - Download latest release bin file `mitsubishi2MQTT_WEMOS_D1_Mini.bin.zip` or `mitsubishi2MQTT_ESP8266-ESP01.bin` and exact it.
- - Flash `mitsubishi2MQTT_WEMOS_D1_Mini.bin` with esptool.py with command: ```esptool.py -b 460800 --before default_reset --after no_reset --chip esp8266 write_flash --flash_mode dio --flash_size keep 0x0 mitsubishi2MQTT_WEMOS_D1_Mini.bin```
- - If you do not want to install EspTool, just use EspTool web with Chrome or Edge browser here: https://espressif.github.io/esptool-js/, after connected, choose file: `mitsubishi2MQTT_WEMOS_D1_Mini.bin` and then enter `Flash Address` 0x0 and press `Program`.
+Grundsätzlich funktioniert jede Mitsubishi-Electric-Inneneinheit mit [`CN105`-Anschluss](hardware/CN105.jpg) auf der Hauptplatine. Eine lange, bestätigte Liste gibt es im [HeatPump-Wiki](https://github.com/SwiCago/HeatPump/wiki/Supported-models).
+
+Als Controller eignen sich **ESP32** (auch S2/S3/C3) und **ESP8266** (Wemos D1 Mini, ESP-01). Anschlussbeispiele und Fotos liegen im Ordner [`hardware/`](hardware/):
+
+<img src="hardware/CN105_ESP8266.png" width="500"/>
+
+- ESP32 nutzt standardmäßig **UART0** (TX GPIO 1, RX GPIO 3); eigene Pins lassen sich unter *Einstellungen → Sonstiges* setzen (dann UART1)
+- ESP8266 nutzt die Hardware-Serial
+
+Benötigte Teile für den `CN105`-Stecker: JST **PAP-05V-S** (Gehäuse) + **SPHD-002T-P0.5** (Crimp-Kontakte), alternativ fertige Pigtails (z. B. AliExpress, 5-polig, 2 mm PA-Serie).
 
 ***
 
-## MQTT topic use cases
-The `topic` is: "mqtt_topic/mqtt_friendly_name"
-- topic/power/set OFF
-- topic/mode/set AUTO HEAT COOL DRY FAN_ONLY OFF ON
-- topic/temp/set 16-31
-- topic/remote_temp/set also called "room_temp", the implementation defined in "HeatPump" seems not work in some models
-- topic/fan/set 1-4 AUTO QUIET
-- topic/vane/set 1-5 SWING AUTO
-- topic/wide-vane/set << < | > >>
-- ~~topic/settings~~ (replaced by topic/state)
-- topic/state
-- topic/debug/packets
-- topic/debug/packets/set on off
-- topic/debug/logs
-- topic/debug/logs/set on off
-- topic/custom/send as example "fc 42 01 30 10 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 7b " see https://github.com/SwiCago/HeatPump/blob/master/src/HeatPump.h
-- topic/system/set to control the device with commands: "restart": reboot the device, "factory": reset device to fatory state.
-- topic/system/opt/rqt with json data to change to Web Panel option. Payloads: {"options": {"webpanel": "Off" }} or {"options": {"webpanel": "On" } }
-***
+## Selbst bauen
+
+Das Projekt nutzt [PlatformIO](https://platformio.org/):
+
+```bash
+pio run -e ESP32DEV
+```
+
+Verfügbare Umgebungen: `ESP32DEV`, `WEMOS_D1_Mini`, `ESP8266-ESP01` (siehe `platformio.ini`).
+
+> **Windows-Tipp**: Falls die ESP32-Toolchain-Installation mit einem Pfadfehler abbricht, das PlatformIO-Verzeichnis auf einen kurzen Pfad legen: `PLATFORMIO_CORE_DIR=C:\pio` (260-Zeichen-Limit).
+
+**UI ohne Hardware entwickeln**: `python tools/webui_preview.py` setzt alle Webseiten aus den C-Templates zusammen und legt sie als HTML in `tools/preview/` ab — einfach im Browser öffnen. Die Oberfläche liegt als eingebettete Strings in `main/htmls/`.
 
 ***
 
-## MQTT secure connection
-MQTT secure connection via `8883` port only support ESP32, app inlude default CA-Root-Certificate for Letsencrypt base domain. You can set your Certificate in the Setup -> Unit
-***
+## MQTT
 
-## Special thanks
-SwiCago for the great libraries: https://github.com/SwiCago/HeatPump
+Vollständig kompatibel zum Original — Topic-Schema `mqtt_topic/friendly_name/...`:
 
-Hadley in New Zealand. His blog post, describing baud rate and details of cn105, Raspberry Pi Python code:
+- `.../power/set`, `.../mode/set`, `.../temp/set`, `.../fan/set`, `.../vane/set`, `.../wide-vane/set`
+- `.../state`, `.../debug/logs`, `.../debug/packets`
+- `.../system/set` (`restart`, `factory`)
 
-<https://nicegear.co.nz/blog/hacking-a-mitsubishi-heat-pump-air-conditioner/>
-
-Wayback machine link as the site no longer exists:
-<https://web.archive.org/web/20171007190023/https://nicegear.co.nz/blog/hacking-a-mitsubishi-heat-pump-air-conditioner/>
+Home-Assistant-Autodiscovery ist eingebaut (Standard-Topic `homeassistant`, änderbar unter *Einstellungen → Sonstiges*). MQTT über TLS (Port 8883) wird auf ESP32 unterstützt.
 
 ***
 
-## License
+## Danksagung
 
-Licensed under the GNU Lesser General Public License.
-https://www.gnu.org/licenses/lgpl-3.0.txt
+- [dzungpv/mitsubishi2MQTT](https://github.com/dzungpv/mitsubishi2MQTT) und [gysmo38/mitsubishi2MQTT](https://github.com/gysmo38/mitsubishi2MQTT) — die Basis dieses Projekts
+- [SwiCago/HeatPump](https://github.com/SwiCago/HeatPump) — die Bibliothek für das CN105-Protokoll
+- Hadley (NZ) für die [ursprüngliche CN105-Analyse](https://web.archive.org/web/20171007190023/https://nicegear.co.nz/blog/hacking-a-mitsubishi-heat-pump-air-conditioner/)
 
-***
-If you like my work and use it, give a star.
+## Lizenz
+
+[GNU Lesser General Public License](LICENSE.md) — wie das Original.
