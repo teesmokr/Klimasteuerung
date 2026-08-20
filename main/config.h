@@ -40,6 +40,11 @@ extern "C"
 #include <ESPAsyncTCP.h> // ESPAsyncWebServer for ESP8266
 #define U_PART U_FS
 #endif
+#ifdef ESP32
+#include <HTTPClient.h> // schedule timer: control remote units
+#else
+#include <ESP8266HTTPClient.h> // schedule timer: control remote units
+#endif
 #include <espMqttClient.h>     // espMqttClient
 #include <ESPAsyncWebServer.h> // ESPAsyncWebServer
 AsyncWebServer server(80);     // Async Web server
@@ -168,6 +173,8 @@ const PROGMEM char *mqtt_conf = "/mqtt.json";
 const PROGMEM char *unit_conf = "/unit.json";
 const PROGMEM char *console_file = "/console.log";
 const PROGMEM char *others_conf = "/others.json";
+const PROGMEM char *devices_conf = "/devices.json";
+const PROGMEM char *schedules_conf = "/schedules.json";
 // pinouts
 const PROGMEM uint8_t blueLedPin = 2; // The ESP32 has an internal blue LED at D2 (GPIO 02)
 // keep LED off (check board schematic)
@@ -178,6 +185,8 @@ const PROGMEM char *mqtt_conf = "mqtt.json";
 const PROGMEM char *unit_conf = "unit.json";
 const PROGMEM char *console_file = "console.log";
 const PROGMEM char *others_conf = "others.json";
+const PROGMEM char *devices_conf = "devices.json";
+const PROGMEM char *schedules_conf = "schedules.json";
 // pinouts
 const PROGMEM uint8_t blueLedPin = LED_BUILTIN; // Onboard LED = digital pin 2 "D4" (blue LED on WEMOS D1-Mini)
 // keep LED off (For Wemos D1-Mini), Other board check the schematic
@@ -201,6 +210,7 @@ String hostname = "";
 String ap_ssid;
 String ap_pwd;
 String ota_pwd;
+String devices_json = "[]"; // list of remote units [{"n":"Name","a":"host-or-ip"}] for the multi-device panel
 
 // WiFi static addresses
 String wifi_static_ip;

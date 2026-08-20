@@ -3,3 +3,6 @@
 .pio*
 *.bin
 build/
+
+tools/preview/
+firmware-out/

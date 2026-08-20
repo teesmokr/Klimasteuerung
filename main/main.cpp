@@ -29,6 +29,8 @@ bool loadWifi();
 bool loadMqtt();
 bool loadUnit();
 bool loadOthers();
+bool loadDevices();
+bool saveDevices(const String& devicesJson);
 void saveMqtt(String mqttFn, const String& mqttHost, String mqttPort, const String& mqttUser, const String& mqttPwd, String mqttTopic, const String& mqttRootCaCert);
 void saveUnit(String tempUnit, String supportMode, String supportFanMode, String loginPassword, String tempStep, String languageIndex);
 void saveWifi(String apSsid, const String& apPwd, String hostName, const String& otaPwd, const String& local_ip, const String& gw_ip, const String& subnet_ip, const String& dns_ip);
@@ -52,6 +54,38 @@ void handleUnit(AsyncWebServerRequest *request);
 void handleWifi(AsyncWebServerRequest *request);
 void handleStatus(AsyncWebServerRequest *request);
 void handleControl(AsyncWebServerRequest *request);
+void handleApiStatus(AsyncWebServerRequest *request);
+void handleApiControl(AsyncWebServerRequest *request);
+void handleApiDevices(AsyncWebServerRequest *request);
+void handleApiSchedules(AsyncWebServerRequest *request);
+void handleTimers(AsyncWebServerRequest *request);
+
+// schedule timers (multi-device, executed by this unit)
+#define MAX_SCHEDULES 8
+struct ScheduleRule
+{
+  bool enabled;
+  char addr[40];      // empty = this unit, else host/ip of a remote unit
+  uint8_t repeatType; // 0 = weekday mask, 1 = every N days
+  uint8_t daysMask;   // bit0 = Monday ... bit6 = Sunday
+  uint8_t interval;   // every N days (>= 1)
+  time_t anchorMid;   // local midnight of the anchor date (repeatType 1)
+  uint16_t fromMin;   // minutes since local midnight
+  uint16_t toMin;
+  char mode[9];       // AUTO/COOL/HEAT/DRY/FAN
+  float temp;         // in the target unit's display scale (sent as TEMP)
+  bool offAfter;      // power off when the window ends
+  bool active;        // runtime: window currently applied
+};
+ScheduleRule schedules[MAX_SCHEDULES];
+uint8_t schedules_count = 0;
+String schedules_json = "[]";
+unsigned long lastScheduleCheck = 0;
+bool loadSchedules();
+bool saveSchedules(const String& schedulesJson);
+bool parseSchedules(const String& json);
+void checkSchedules();
+void scheduleApply(ScheduleRule &rule, bool start);
 void handleMetrics(AsyncWebServerRequest *request);
 void handleLogin(AsyncWebServerRequest *request);
 void handleUpgrade(AsyncWebServerRequest *request);
@@ -171,6 +205,8 @@ void setup()
   }
   loadOthers();
   loadUnit();
+  loadDevices();
+  loadSchedules();
 #ifdef ESP32
   WiFi.setHostname(hostname.c_str());
 #else
@@ -224,8 +260,15 @@ void setup()
     MDNS.begin(hostname); // DNS service for .local address access
     // Web interface
     if (!_webPanelDisable) {
+        // allow the multi-device panel on another unit to read/control this one
+        DefaultHeaders::Instance().addHeader(F("Access-Control-Allow-Origin"), F("*"));
+        server.on("/api/status", handleApiStatus);
+        server.on("/api/control", handleApiControl);
+        server.on("/api/devices", handleApiDevices);
+        server.on("/api/schedules", handleApiSchedules);
         server.on("/", handleRoot);
         server.on("/control", handleControl);
+        server.on("/timers", handleTimers);
         server.on("/setup", handleSetup);
         server.on("/mqtt", handleMqtt);
         server.on("/wifi", handleWifi);
@@ -241,7 +284,7 @@ void setup()
         }
         if (!isSecureEnable()) {
             server.on("/upgrade", handleUpgrade);
-            server.on("/upload", WebRequestMethod::HTTP_ANY, handleUploadDone, handleUploadLoop);
+            server.on("/upload", AsyncWebRequestMethod::HTTP_ALL, handleUploadDone, handleUploadLoop);
 #ifdef ESP32
             Update.onProgress(otaUpdateProgress);
 #endif
@@ -623,6 +666,277 @@ bool loadOthers()
   return true;
 }
 
+bool loadDevices()
+{
+  devices_json = F("[]");
+  if (!SPIFFS.exists(devices_conf))
+  {
+    return false;
+  }
+  File configFile = SPIFFS.open(devices_conf, "r");
+  if (!configFile)
+  {
+    return false;
+  }
+  size_t size = configFile.size();
+  if (size > 2048)
+  {
+    configFile.close();
+    return false;
+  }
+  devices_json = configFile.readString();
+  configFile.close();
+  if (devices_json.isEmpty())
+  {
+    devices_json = F("[]");
+    return false;
+  }
+  return true;
+}
+
+bool saveDevices(const String& devicesJson)
+{
+  if (devicesJson.length() > 2048)
+  {
+    return false;
+  }
+  // validate it is a JSON array before persisting
+  const size_t capacity = JSON_ARRAY_SIZE(12) + 12 * JSON_OBJECT_SIZE(2) + 1024;
+  DynamicJsonDocument doc(capacity);
+  DeserializationError err = deserializeJson(doc, devicesJson);
+  if (err || !doc.is<JsonArray>())
+  {
+    return false;
+  }
+  File configFile = SPIFFS.open(devices_conf, "w");
+  if (!configFile)
+  {
+    return false;
+  }
+  configFile.print(devicesJson);
+  configFile.close();
+  devices_json = devicesJson;
+  return true;
+}
+
+static uint16_t parseHM(const char *s)
+{
+  int h = 0, m = 0;
+  sscanf(s, "%d:%d", &h, &m);
+  return (uint16_t)(h * 60 + m);
+}
+
+bool parseSchedules(const String& json)
+{
+  const size_t capacity = JSON_ARRAY_SIZE(MAX_SCHEDULES) + MAX_SCHEDULES * JSON_OBJECT_SIZE(12) + 1024;
+  DynamicJsonDocument doc(capacity);
+  DeserializationError err = deserializeJson(doc, json);
+  if (err || !doc.is<JsonArray>())
+  {
+    return false;
+  }
+  setenv("TZ", timezone.c_str(), 1);
+  tzset();
+  uint8_t n = 0;
+  for (JsonObject o : doc.as<JsonArray>())
+  {
+    if (n >= MAX_SCHEDULES)
+      break;
+    ScheduleRule &r = schedules[n];
+    memset(&r, 0, sizeof(r));
+    r.enabled = (o["en"] | 1) != 0;
+    strlcpy(r.addr, o["a"] | "", sizeof(r.addr));
+    r.repeatType = o["rt"] | 0;
+    r.daysMask = o["dm"] | 0x7F;
+    r.interval = o["iv"] | 1;
+    if (r.interval < 1)
+      r.interval = 1;
+    const char *an = o["an"] | "";
+    if (an[0])
+    {
+      int y = 0, mo = 0, d = 0;
+      if (sscanf(an, "%d-%d-%d", &y, &mo, &d) == 3)
+      {
+        struct tm tmv = {};
+        tmv.tm_year = y - 1900;
+        tmv.tm_mon = mo - 1;
+        tmv.tm_mday = d;
+        tmv.tm_isdst = -1;
+        r.anchorMid = mktime(&tmv);
+      }
+    }
+    r.fromMin = parseHM(o["f"] | "00:00");
+    r.toMin = parseHM(o["t"] | "00:00");
+    strlcpy(r.mode, o["md"] | "COOL", sizeof(r.mode));
+    r.temp = o["tp"] | 22.0f;
+    r.offAfter = (o["off"] | 1) != 0;
+    r.active = false;
+    n++;
+  }
+  schedules_count = n;
+  return true;
+}
+
+bool loadSchedules()
+{
+  schedules_json = F("[]");
+  schedules_count = 0;
+  if (!SPIFFS.exists(schedules_conf))
+  {
+    return false;
+  }
+  File configFile = SPIFFS.open(schedules_conf, "r");
+  if (!configFile)
+  {
+    return false;
+  }
+  if (configFile.size() > 3072)
+  {
+    configFile.close();
+    return false;
+  }
+  String json = configFile.readString();
+  configFile.close();
+  if (json.isEmpty() || !parseSchedules(json))
+  {
+    return false;
+  }
+  schedules_json = json;
+  return true;
+}
+
+bool saveSchedules(const String& schedulesJson)
+{
+  if (schedulesJson.length() > 3072)
+  {
+    return false;
+  }
+  if (!parseSchedules(schedulesJson))
+  {
+    return false;
+  }
+  File configFile = SPIFFS.open(schedules_conf, "w");
+  if (!configFile)
+  {
+    return false;
+  }
+  configFile.print(schedulesJson);
+  configFile.close();
+  schedules_json = schedulesJson;
+  return true;
+}
+
+void scheduleApply(ScheduleRule &rule, bool start)
+{
+  if (rule.addr[0] == '\0')
+  {
+    // this unit: talk to the heat pump directly
+    if (!hp.isConnected())
+      return;
+    heatpumpSettings settings = hp.getSettings();
+    if (start)
+    {
+      settings.power = "ON";
+      settings.mode = rule.mode;
+      settings.temperature = convertLocalUnitToCelsius(rule.temp, useFahrenheit);
+    }
+    else
+    {
+      settings.power = "OFF";
+    }
+    hp.setSettings(settings);
+    if (hp.getSettings() == hp.getWantedSettings())
+    {
+      ESP_LOGW(TAG, "Schedule: settings unchanged, skip");
+    }
+    else
+    {
+      requestHpUpdate = true;
+      requestHpUpdateTime = millis() + 10;
+    }
+  }
+  else
+  {
+    // remote unit: send the same args the web panel would
+    String url = String(F("http://")) + rule.addr + F("/api/control");
+    String body;
+    if (start)
+    {
+      body = String(F("PWRCHK=&POWER=ON&MODE=")) + rule.mode + F("&TEMP=") + String(rule.temp, 1);
+    }
+    else
+    {
+      body = F("PWRCHK=");
+    }
+    WiFiClient client;
+    HTTPClient http;
+    http.setTimeout(3000);
+    if (http.begin(client, url))
+    {
+      http.addHeader(F("Content-Type"), F("application/x-www-form-urlencoded"));
+      int code = http.POST(body);
+      ESP_LOGI(TAG, "Schedule -> %s (%s): HTTP %d", rule.addr, start ? "start" : "end", code);
+      http.end();
+    }
+  }
+}
+
+void checkSchedules()
+{
+  if (schedules_count == 0)
+    return;
+  if (lastScheduleCheck != 0 && millis() - lastScheduleCheck < 20000)
+    return;
+  lastScheduleCheck = millis();
+  time_t now;
+  time(&now);
+  if (now < min_valid_date)
+    return; // clock not synced yet
+  setenv("TZ", timezone.c_str(), 1);
+  tzset();
+  struct tm ti;
+  localtime_r(&now, &ti);
+  uint16_t mins = (uint16_t)(ti.tm_hour * 60 + ti.tm_min);
+  uint8_t wd = (uint8_t)((ti.tm_wday + 6) % 7); // Monday = 0
+  for (uint8_t i = 0; i < schedules_count; i++)
+  {
+    ScheduleRule &r = schedules[i];
+    if (!r.enabled)
+    {
+      r.active = false;
+      continue;
+    }
+    if (r.fromMin >= r.toMin)
+      continue;
+    bool dayOk;
+    if (r.repeatType == 1)
+    {
+      if (r.anchorMid == 0)
+        continue;
+      long days = (long)((now - r.anchorMid) / 86400);
+      dayOk = days >= 0 && (days % r.interval) == 0;
+    }
+    else
+    {
+      dayOk = (r.daysMask & (1 << wd)) != 0;
+    }
+    bool inWindow = dayOk && mins >= r.fromMin && mins < r.toMin;
+    if (inWindow && !r.active)
+    {
+      r.active = true;
+      scheduleApply(r, true);
+    }
+    else if (!inWindow && r.active)
+    {
+      r.active = false;
+      if (r.offAfter)
+      {
+        scheduleApply(r, false);
+      }
+    }
+  }
+}
+
 void saveMqtt(String mqttFn, const String& mqttHost, String mqttPort, const String& mqttUser, const String& mqttPwd, String mqttTopic, const String& mqttRootCaCert)
 {
   // Allocate document capacity.
@@ -799,7 +1113,7 @@ void initCaptivePortal()
   if (!isSecureEnable())
   {
     server.on("/upgrade", handleUpgrade);
-    server.on("/upload", WebRequestMethod::HTTP_ANY, handleUploadDone, handleUploadLoop);
+    server.on("/upload", AsyncWebRequestMethod::HTTP_ALL, handleUploadDone, handleUploadLoop);
 #ifdef ESP32
     Update.onProgress(otaUpdateProgress);
 #endif
@@ -1591,6 +1905,124 @@ void handleStatus(AsyncWebServerRequest *request)
   statusPage.replace(F("_CURRENT_TIME_"), F("<font color='blue'><b>") + getCurrentTime() + F("</b></font>"));
   statusPage.replace(F("_BOOT_TIME_"), F("<font color='orange'><b>") + getUpTime() + F("</b></font>"));
   sendWrappedHTML(request, statusPage);
+}
+
+// JSON API for the multi-device web panel. Auth mirrors the web pages: only
+// enforced when a login password is set (cookie based, so remote units with a
+// password can only be controlled from their own origin).
+static bool apiAuthOk(AsyncWebServerRequest *request)
+{
+  if (login_password.length() > 0 && !is_authenticated(request))
+  {
+    request->send(401, "application/json", String(F("{\"err\":\"auth\"}")));
+    return false;
+  }
+  return true;
+}
+
+void handleApiStatus(AsyncWebServerRequest *request)
+{
+  if (!apiAuthOk(request))
+    return;
+  heatpumpSettings s = hp.getSettings();
+  String json;
+  json.reserve(360);
+  json += F("{\"name\":\"");
+  json += hostname;
+  json += F("\",\"connected\":");
+  json += hp.isConnected() ? F("true") : F("false");
+  json += F(",\"power\":\"");
+  json += s.power != NULL ? s.power : "";
+  json += F("\",\"mode\":\"");
+  json += s.mode != NULL ? s.mode : "";
+  json += F("\",\"fan\":\"");
+  json += s.fan != NULL ? s.fan : "";
+  json += F("\",\"vane\":\"");
+  json += s.vane != NULL ? s.vane : "";
+  json += F("\",\"widevane\":\"");
+  json += s.wideVane != NULL ? s.wideVane : "";
+  json += F("\",\"temp\":");
+  json += String(convertCelsiusToLocalUnit(hp.getTemperature(), useFahrenheit), 1);
+  json += F(",\"room\":");
+  json += String(convertCelsiusToLocalUnit(hp.getRoomTemperature(), useFahrenheit), 1);
+  json += F(",\"min\":");
+  json += String(convertCelsiusToLocalUnit(min_temp, useFahrenheit), 1);
+  json += F(",\"max\":");
+  json += String(convertCelsiusToLocalUnit(max_temp, useFahrenheit), 1);
+  json += F(",\"step\":");
+  json += temp_step.isEmpty() ? String(F("1")) : temp_step;
+  json += F(",\"scale\":\"");
+  json += getTemperatureScale();
+  json += F("\",\"heat\":");
+  json += supportHeatMode ? F("true") : F("false");
+  json += F(",\"quiet\":");
+  json += supportQuietMode ? F("true") : F("false");
+  json += F("}");
+  request->send(200, "application/json", json);
+}
+
+void handleApiControl(AsyncWebServerRequest *request)
+{
+  if (!apiAuthOk(request))
+    return;
+  if (!hp.isConnected())
+  {
+    request->send(503, "application/json", String(F("{\"err\":\"hvac\"}")));
+    return;
+  }
+  heatpumpSettings settings = hp.getSettings();
+  change_states(request, settings);
+  request->send(200, "application/json", String(F("{\"ok\":true}")));
+}
+
+void handleApiDevices(AsyncWebServerRequest *request)
+{
+  if (!apiAuthOk(request))
+    return;
+  if (request->hasArg(F("devices")))
+  {
+    if (saveDevices(request->arg(F("devices"))))
+    {
+      request->send(200, "application/json", String(F("{\"ok\":true}")));
+    }
+    else
+    {
+      request->send(400, "application/json", String(F("{\"err\":\"invalid\"}")));
+    }
+    return;
+  }
+  request->send(200, "application/json", devices_json);
+}
+
+void handleApiSchedules(AsyncWebServerRequest *request)
+{
+  if (!apiAuthOk(request))
+    return;
+  if (request->hasArg(F("schedules")))
+  {
+    if (saveSchedules(request->arg(F("schedules"))))
+    {
+      request->send(200, "application/json", String(F("{\"ok\":true}")));
+    }
+    else
+    {
+      request->send(400, "application/json", String(F("{\"err\":\"invalid\"}")));
+    }
+    return;
+  }
+  request->send(200, "application/json", schedules_json);
+}
+
+void handleTimers(AsyncWebServerRequest *request)
+{
+  if (!checkLogin(request))
+  {
+    return;
+  }
+  String timersPage = FPSTR(timers_script);
+  timersPage += FPSTR(html_page_timers);
+  timersPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
+  sendWrappedHTML(request, timersPage);
 }
 
 String getSelectStatus(const String &curr_status, const String &status)
@@ -3336,6 +3768,7 @@ void loop()
 #endif
     checkHpUpdateRequest();
     checkWifiScanRequest();
+    checkSchedules();
     // Sync HVAC UNIT
     if (!hp.isConnected())
     {
