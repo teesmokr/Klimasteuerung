@@ -59,7 +59,9 @@ void handleApiControl(AsyncWebServerRequest *request);
 void handleApiDevices(AsyncWebServerRequest *request);
 void handleApiSchedules(AsyncWebServerRequest *request);
 void handleTimers(AsyncWebServerRequest *request);
+void handleDevicesPage(AsyncWebServerRequest *request);
 void handleCss(AsyncWebServerRequest *request);
+uint8_t devices_count = 0; // linked units, parsed from devices_json
 
 // schedule timers (multi-device, executed by this unit)
 #define MAX_SCHEDULES 8
@@ -271,6 +273,7 @@ void setup()
         server.on("/", handleRoot);
         server.on("/control", handleControl);
         server.on("/timers", handleTimers);
+        server.on("/devices", handleDevicesPage);
         server.on("/setup", handleSetup);
         server.on("/mqtt", handleMqtt);
         server.on("/wifi", handleWifi);
@@ -659,18 +662,48 @@ bool loadOthers()
   }
   if (doc.containsKey("tz")) // check key to prevent data is "null" if not exist
   {
-    timezone = doc["tz"].as<String>();
+    String tz = doc["tz"].as<String>();
+    if (!tz.isEmpty())
+    {
+      timezone = tz; // keep the CET default when nothing was configured
+    }
   }
   if (doc.containsKey("ntp"))
   {
-    ntpServer = doc["ntp"].as<String>();
+    String ntp = doc["ntp"].as<String>();
+    if (!ntp.isEmpty())
+    {
+      ntpServer = ntp;
+    }
   }
   return true;
+}
+
+// devices_json is either a legacy array [{"n":..,"a":..}] or an object
+// {"r":"master"|"slave","d":[{"n":..,"a":..}]} carrying the panel role
+static int8_t parseDeviceList(const String& json)
+{
+  const size_t capacity = JSON_OBJECT_SIZE(2) + JSON_ARRAY_SIZE(12) + 12 * JSON_OBJECT_SIZE(2) + 1024;
+  DynamicJsonDocument doc(capacity);
+  if (deserializeJson(doc, json))
+  {
+    return -1;
+  }
+  if (doc.is<JsonArray>())
+  {
+    return (int8_t)doc.as<JsonArray>().size();
+  }
+  if (doc.is<JsonObject>() && doc["d"].is<JsonArray>())
+  {
+    return (int8_t)doc["d"].as<JsonArray>().size();
+  }
+  return -1;
 }
 
 bool loadDevices()
 {
   devices_json = F("[]");
+  devices_count = 0;
   if (!SPIFFS.exists(devices_conf))
   {
     return false;
@@ -686,13 +719,15 @@ bool loadDevices()
     configFile.close();
     return false;
   }
-  devices_json = configFile.readString();
+  String json = configFile.readString();
   configFile.close();
-  if (devices_json.isEmpty())
+  int8_t count = json.isEmpty() ? -1 : parseDeviceList(json);
+  if (count < 0)
   {
-    devices_json = F("[]");
     return false;
   }
+  devices_json = json;
+  devices_count = (uint8_t)count;
   return true;
 }
 
@@ -702,11 +737,8 @@ bool saveDevices(const String& devicesJson)
   {
     return false;
   }
-  // validate it is a JSON array before persisting
-  const size_t capacity = JSON_ARRAY_SIZE(12) + 12 * JSON_OBJECT_SIZE(2) + 1024;
-  DynamicJsonDocument doc(capacity);
-  DeserializationError err = deserializeJson(doc, devicesJson);
-  if (err || !doc.is<JsonArray>())
+  int8_t count = parseDeviceList(devicesJson);
+  if (count < 0)
   {
     return false;
   }
@@ -718,6 +750,7 @@ bool saveDevices(const String& devicesJson)
   configFile.print(devicesJson);
   configFile.close();
   devices_json = devicesJson;
+  devices_count = (uint8_t)count;
   return true;
 }
 
@@ -1106,6 +1139,11 @@ void initCaptivePortal()
             { request->redirect(localApIpUrl); }); // windows call home
 
   server.on("/style.css", handleCss);
+  // allow preparing the multi-device setup and schedules while still in AP mode
+  server.on("/devices", handleDevicesPage);
+  server.on("/timers", handleTimers);
+  server.on("/api/devices", handleApiDevices);
+  server.on("/api/schedules", handleApiSchedules);
   server.on("/", handleInitSetup);
   server.on("/save", handleSaveWifiAndMqtt);
   server.on("/reboot", handleReboot);
@@ -1366,7 +1404,7 @@ void handleNotFound(AsyncWebServerRequest *request)
     String menuRootPage = FPSTR(html_menu_root);
     menuRootPage.replace(F("_SHOW_LOGOUT_"), (String)(login_password.length() > 0));
     // not show control button if hp not connected
-    menuRootPage.replace(F("_SHOW_CONTROL_"), (String)(hp.isConnected()));
+    menuRootPage.replace(F("_SHOW_CONTROL_"), (String)(hp.isConnected() || devices_count > 0));
     sendWrappedHTML(request, menuRootPage);
   }
 }
@@ -1446,7 +1484,7 @@ void handleRoot(AsyncWebServerRequest *request)
     // set data
     menuRootPage.replace(F("_SHOW_LOGOUT_"), (String)(login_password.length() > 0));
     // not show control button if hp not connected
-    menuRootPage.replace(F("_SHOW_CONTROL_"), (String)(hp.isConnected()));
+    menuRootPage.replace(F("_SHOW_CONTROL_"), (String)(hp.isConnected() || devices_count > 0));
     sendWrappedHTML(request, menuRootPage);
   }
 }
@@ -2034,6 +2072,18 @@ void handleTimers(AsyncWebServerRequest *request)
   sendWrappedHTML(request, timersPage);
 }
 
+void handleDevicesPage(AsyncWebServerRequest *request)
+{
+  if (!checkLogin(request))
+  {
+    return;
+  }
+  String devicesPage = FPSTR(devices_script);
+  devicesPage += FPSTR(html_page_devices);
+  devicesPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
+  sendWrappedHTML(request, devicesPage);
+}
+
 // stylesheet is served straight from flash: keeps the per-request RAM low
 // (critical on ESP8266) and lets the browser cache it
 void handleCss(AsyncWebServerRequest *request)
@@ -2138,8 +2188,9 @@ void handleControl(AsyncWebServerRequest *request)
   if (!checkLogin(request)) {
       return;
   }
-  // not connected to hp, redirect to status page
-  if (!hp.isConnected())
+  // without a HVAC connection the page is still useful as multi-device panel;
+  // only redirect when there are no linked units either
+  if (!hp.isConnected() && devices_count == 0)
   {
     AsyncWebServerResponse *response = request->beginResponse(301);
     response->addHeader("Location", "/status");
@@ -2149,7 +2200,10 @@ void handleControl(AsyncWebServerRequest *request)
   }
 
   heatpumpSettings settings = hp.getSettings();
-  settings = change_states(request, settings);
+  if (hp.isConnected())
+  {
+    settings = change_states(request, settings);
+  }
 
   String controlPage = FPSTR(control_script_events);
   controlPage = FPSTR(control_script_events);

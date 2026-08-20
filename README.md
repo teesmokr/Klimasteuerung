@@ -41,8 +41,8 @@ made with ❤ in Lingen
    - Wemos D1 Mini / ESP-01: `firmware.bin` der jeweiligen Build-Umgebung
 2. **Verbinden**: Nach dem ersten Start öffnet das Gerät ein WLAN namens `HVAC-XXXXXXXXXXXX`. Damit verbinden — das Setup öffnet sich automatisch (sonst `http://192.168.4.1` aufrufen). Tipp: Am Handy vorher die mobilen Daten ausschalten, sonst versucht der Browser die Seite übers Mobilfunknetz zu laden.
 3. **Einrichten**: WLAN-Zugangsdaten (und optional MQTT) eintragen, speichern, neu starten. Danach ist das Gerät unter `http://hvac-xxxxxxxxxxxx.local` bzw. seiner IP erreichbar.
-4. **Weitere Geräte verbinden**: Auf dem Wunsch-Master unter *Steuerung* → ⚙ die anderen Einheiten mit Name + IP hinzufügen. Danach oben per Tab umschalten.
-5. **Zeitpläne**: Im Hauptmenü unter *Zeitpläne* Regeln anlegen. Die Uhrzeit kommt per NTP; Zeitzone und NTP-Server stehen unter *Einstellungen → Sonstiges*.
+4. **Weitere Geräte verbinden**: Unter *Einstellungen → Geräte* die Rolle wählen (Master/Slave) und auf dem Master die anderen Einheiten mit Name + IP hinzufügen. Das funktioniert auch ohne angeschlossene Klimaanlage — die Verknüpfung lässt sich also schon vor der Installation vorbereiten (sogar im AP-Modus). Danach oben auf der Steuerungs-Seite per Tab umschalten.
+5. **Zeitpläne**: Im Hauptmenü unter *Zeitpläne* Regeln anlegen. Die Uhrzeit kommt per NTP; die Zeitzone steht standardmäßig auf Mitteleuropa (`CET-1CEST`, mit Sommerzeit) und ist unter *Einstellungen → Sonstiges* änderbar.
 
 > ⚠️ **Achtung**: Für den Anschluss muss die Inneneinheit geöffnet werden (`CN105`-Stecker auf der Hauptplatine). Vorher unbedingt die Stromversorgung trennen — unsachgemäßer Umgang kann zu Wasserschäden, Stromschlag oder Brand führen!
 

@@ -245,7 +245,7 @@ const PROGMEM char *default_mqtt_topic = "mitsubishi2mqtt";
 // Define global variables for Others settings
 bool others_haa;
 String others_haa_topic;
-String timezone = "ICT-7"; // Set timezone to Vietnam Standard Time
+String timezone = "CET-1CEST,M3.5.0,M10.5.0/3"; // default: central european time with DST rules
 
 // Define global variables for HA topics
 String ha_power_set_topic;

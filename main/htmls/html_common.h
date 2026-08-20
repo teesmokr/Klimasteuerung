@@ -365,6 +365,11 @@ const char html_css[] PROGMEM =
             "font-size: 1.2rem;"
             "padding: 0;"
         "}"
+        ".dhint {"
+            "font-size: .82rem;"
+            "color: var(--muted);"
+            "line-height: 1.45;"
+        "}"
         /* schedule timers */
         ".wdays {"
             "display: flex;"

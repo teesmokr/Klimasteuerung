@@ -184,6 +184,10 @@ pages["timers.html"] = wrap(tpl["timers_script"] + tpl["html_page_timers"], {
     "_TXT_BACK_": "Zurück",
 })
 
+pages["devices.html"] = wrap(tpl["devices_script"] + tpl["html_page_devices"], {
+    "_TXT_BACK_": "Zurück",
+})
+
 pages["upgrade.html"] = wrap(tpl["html_page_upgrade"], {
     "_TXT_FW_UPDATE_PAGE_": "Firmware-Aktualisierung",
     "_TXT_UPGRADE_INFO_": "Upgrade per Datei-Upload",
