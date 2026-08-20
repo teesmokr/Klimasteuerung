@@ -365,8 +365,16 @@ void setup()
         ws.onEvent(onWsEvent);
         server.addHandler(&ws);
 #endif
-        // event source client
-        events.onConnect([](AsyncEventSourceClient *client) { client->send("hello!", NULL, millis(), 1000); });
+        // event source client; cap concurrent SSE clients so a handful of open
+        // browser tabs cannot exhaust the ESP8266 heap
+        events.onConnect([](AsyncEventSourceClient *client)
+                         {
+          if (events.count() > 4)
+          {
+            client->close();
+            return;
+          }
+          client->send("hello!", NULL, millis(), 1000); });
         server.addHandler(&events);
         server.begin();
     }
@@ -1684,6 +1692,7 @@ void sendWrappedHTML(AsyncWebServerRequest *request, const String &content)
   response.replace(F("_UNIT_NAME_"), hostname);
 
 #ifdef ESP32
+  response.reserve(response.length() + content.length() + footer.length() + 1); // avoid realloc churn
   response += content;
   response += footer;
   request->send(200, "text/html", response);
@@ -2554,6 +2563,15 @@ void checkGitUpdate()
     requestVersionCheck = false;
     upd_state = 1;
     upd_error = "";
+#ifdef ESP8266
+    // TLS to GitHub needs ~18KB; free MQTT first when the heap is tight
+    // (it reconnects automatically via the reconnect timer)
+    if (ESP.getFreeHeap() < 26000 && mqttClient != nullptr && mqttClient->connected())
+    {
+      mqttClient->disconnect();
+      delay(100);
+    }
+#endif
     String tag = fetchLatestVersion();
     if (tag.isEmpty())
     {
