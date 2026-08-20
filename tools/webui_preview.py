@@ -1,4 +1,4 @@
-"""Assemble mitsubishi2MQTT web UI pages from the C header templates for local preview.
+﻿"""Assemble mitsubishi2MQTT web UI pages from the C header templates for local preview.
 
 Mimics what main.cpp does: parse the C string literals out of the headers,
 concatenate header + page + footer, and replace the _PLACEHOLDER_ tokens
@@ -59,7 +59,7 @@ COMMON = {
     "_APP_NAME_": "Mitsubishi2MQTT",
     "_UNIT_NAME_": "HVAC Wohnzimmer",
     "_VERSION_": "2025.07.1 (ESP32)",
-    "_KS_VERSION_": "1.3.2",
+    "_KS_VERSION_": "1.4.0",
 }
 
 def wrap(content, repl):
@@ -239,3 +239,4 @@ for name, html in pages.items():
 print("written to", OUT)
 for n, t in leftover.items():
     print("LEFTOVER", n, t)
+

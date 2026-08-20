@@ -25,6 +25,7 @@ made with ❤ in Lingen
 - **Steuerung als Startseite**: Die URL des Geräts öffnet direkt das Thermostat — alles andere liegt im Einstellungs-Menü
 - **Thermostat-Dial im Home-Assistant-Stil**: Zieltemperatur per Drag am Ring oder über −/+ einstellen, Farbwechsel je nach Modus (Kühlen blau, Heizen orange, Entfeuchten türkis, Auto grün), Live-Updates ohne Neuladen (Server-Sent-Events + Fetch-API)
 - **Ad-hoc-Modus**: Ein Knopf startet die Anlage sofort im gewählten Modus (Kühlen/Heizen/…) und schaltet sie nach einer konfigurierbaren Laufzeit automatisch wieder aus (*Einstellungen → Zeitpläne → Ad-hoc*)
+- **Nachtmodus**: 🌙-Knopf oder automatisches tägliches Zeitfenster (auch über Mitternacht) wendet ein Profil an — Temperatur, Modus, Lüfter, Lamellen frei kombinierbar, „unverändert" pro Feld möglich. Beim Beenden werden die vorherigen Einstellungen wiederhergestellt (*Einstellungen → Zeitpläne → Nachtmodus*)
 - **Mehrere Geräte, eine Oberfläche**: Unter *Einstellungen → Geräte* alle Einheiten eintragen und mit einem Klick **an alle Geräte verteilen** — danach kann *jedes* Webinterface *jede* Klimaanlage steuern (Tabs oben, das eigene Gerät blendet sich automatisch aus). Der Browser spricht die anderen ESPs direkt über deren JSON-API an
 - **Zeitpläne** (bis zu 8 Regeln, laufen auf dem Gerät selbst — kein Browser nötig):
   - Wochentage (Mo–So) **oder** „alle N Tage" mit Startdatum (z. B. *jeden 2. Tag von 8–10 Uhr Schlafzimmer auf 21° kühlen*)
@@ -32,7 +33,7 @@ made with ❤ in Lingen
   - Steuert auch die anderen hinterlegten Geräte (per HTTP auf deren API)
 - **Modernes Design**: Card-Layout, automatischer Hell-/Dunkelmodus, responsiv für Handy und Desktop, keine externen Ressourcen (funktioniert auch offline im AP-Modus)
 - **Online-Update per Klick**: Die Firmware prüft auf Wunsch das neueste GitHub-Release und installiert es direkt übers Internet (*Einstellungen → Firmware-Aktualisierung*); die installierte Version steht im Fußbereich jeder Seite
-- **JSON-API**: `GET /api/status`, `POST /api/control`, `GET|POST /api/devices`, `GET|POST /api/schedules`, `POST /api/adhoc`, `GET|POST /api/update` (CORS-freigegeben)
+- **JSON-API**: `GET /api/status`, `POST /api/control`, `GET|POST /api/devices`, `GET|POST /api/schedules`, `POST /api/adhoc`, `GET|POST /api/night`, `GET|POST /api/update` (CORS-freigegeben)
 - Alles Weitere vom Original: Home-Assistant-Autodiscovery, MQTT-Steuerung, OTA-Firmware-Update, Erstkonfiguration per WLAN-Access-Point, Login-Schutz, mehrsprachige Systemseiten
 
 ***

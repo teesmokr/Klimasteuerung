@@ -102,6 +102,42 @@ bool saveAdhoc(uint16_t minutes);
 void checkAdhoc();
 void handleApiAdhoc(AsyncWebServerRequest *request);
 
+// night mode: a preset profile (temp/mode/fan/vanes) applied manually via the
+// moon button or automatically inside a daily time window (may cross midnight);
+// the previous settings are snapshotted and restored when night mode ends
+struct NightConfig
+{
+  bool autoEn;      // apply automatically inside the window (only while running)
+  uint16_t fromMin; // window start, minutes since local midnight
+  uint16_t toMin;   // window end; fromMin > toMin means the window crosses midnight
+  char mode[9];     // empty = keep current
+  float temp;       // <= 0 = keep current
+  char fan[8];      // empty = keep current
+  char vane[8];     // empty = keep current
+  char wvane[8];    // empty = keep current
+};
+NightConfig night_cfg = {false, 1320, 390, "", 19.0f, "QUIET", "", ""};
+bool night_active = false;
+bool night_manual_off = false; // user ended it inside the window: stay off until the window closes
+unsigned long lastNightCheck = 0;
+struct NightSnapshot
+{
+  bool valid;
+  char power[8];
+  char mode[9];
+  float temp;
+  char fan[8];
+  char vane[8];
+  char wvane[8];
+};
+NightSnapshot night_prev = {false, "", "", 0, "", "", ""};
+bool loadNight();
+bool saveNight();
+void applyNight();
+void endNight();
+void checkNight();
+void handleApiNight(AsyncWebServerRequest *request);
+
 // online update from GitHub releases (issue #1)
 // 0 = idle, 1 = checking, 2 = updating, 3 = error (see upd_error)
 uint8_t upd_state = 0;
@@ -233,6 +269,7 @@ void setup()
   loadDevices();
   loadSchedules();
   loadAdhoc();
+  loadNight();
 #ifdef ESP32
   WiFi.setHostname(hostname.c_str());
 #else
@@ -297,6 +334,7 @@ void setup()
         server.on("/api/devices", handleApiDevices);
         server.on("/api/schedules", handleApiSchedules);
         server.on("/api/adhoc", handleApiAdhoc);
+        server.on("/api/night", handleApiNight);
         server.on("/", handleRoot);
         server.on("/control", handleControl);
         server.on("/timers", handleTimers);
@@ -958,6 +996,177 @@ void checkAdhoc()
   }
 }
 
+bool loadNight()
+{
+  if (!SPIFFS.exists(night_conf))
+  {
+    return false;
+  }
+  File configFile = SPIFFS.open(night_conf, "r");
+  if (!configFile)
+  {
+    return false;
+  }
+  const size_t capacity = JSON_OBJECT_SIZE(8) + 200;
+  DynamicJsonDocument doc(capacity);
+  DeserializationError err = deserializeJson(doc, configFile);
+  configFile.close();
+  if (err)
+  {
+    return false;
+  }
+  night_cfg.autoEn = (doc["en"] | 0) != 0;
+  night_cfg.fromMin = parseHM(doc["f"] | "22:00");
+  night_cfg.toMin = parseHM(doc["t"] | "06:30");
+  strlcpy(night_cfg.mode, doc["md"] | "", sizeof(night_cfg.mode));
+  night_cfg.temp = doc["tp"] | 0.0f;
+  strlcpy(night_cfg.fan, doc["fan"] | "", sizeof(night_cfg.fan));
+  strlcpy(night_cfg.vane, doc["vane"] | "", sizeof(night_cfg.vane));
+  strlcpy(night_cfg.wvane, doc["wv"] | "", sizeof(night_cfg.wvane));
+  return true;
+}
+
+bool saveNight()
+{
+  const size_t capacity = JSON_OBJECT_SIZE(8) + 200;
+  DynamicJsonDocument doc(capacity);
+  doc["en"] = night_cfg.autoEn ? 1 : 0;
+  char buf[6];
+  snprintf(buf, sizeof(buf), "%02u:%02u", night_cfg.fromMin / 60, night_cfg.fromMin % 60);
+  doc["f"] = buf;
+  char buf2[6];
+  snprintf(buf2, sizeof(buf2), "%02u:%02u", night_cfg.toMin / 60, night_cfg.toMin % 60);
+  doc["t"] = buf2;
+  doc["md"] = night_cfg.mode;
+  doc["tp"] = night_cfg.temp;
+  doc["fan"] = night_cfg.fan;
+  doc["vane"] = night_cfg.vane;
+  doc["wv"] = night_cfg.wvane;
+  File configFile = SPIFFS.open(night_conf, "w");
+  if (!configFile)
+  {
+    return false;
+  }
+  serializeJson(doc, configFile);
+  configFile.close();
+  return true;
+}
+
+static void nightSendSettings(heatpumpSettings &settings)
+{
+  hp.setSettings(settings);
+  if (hp.getSettings() == hp.getWantedSettings())
+  {
+    return;
+  }
+  requestHpUpdate = true;
+  requestHpUpdateTime = millis() + 10;
+}
+
+void applyNight()
+{
+  if (!hp.isConnected() || night_active)
+    return;
+  heatpumpSettings settings = hp.getSettings();
+  // snapshot for restore
+  strlcpy(night_prev.power, settings.power != NULL ? settings.power : "ON", sizeof(night_prev.power));
+  strlcpy(night_prev.mode, settings.mode != NULL ? settings.mode : "", sizeof(night_prev.mode));
+  night_prev.temp = settings.temperature;
+  strlcpy(night_prev.fan, settings.fan != NULL ? settings.fan : "", sizeof(night_prev.fan));
+  strlcpy(night_prev.vane, settings.vane != NULL ? settings.vane : "", sizeof(night_prev.vane));
+  strlcpy(night_prev.wvane, settings.wideVane != NULL ? settings.wideVane : "", sizeof(night_prev.wvane));
+  night_prev.valid = true;
+  // apply the profile (empty fields keep the current value)
+  settings.power = "ON";
+  if (night_cfg.mode[0] != '\0')
+    settings.mode = night_cfg.mode;
+  if (night_cfg.temp > 0)
+    settings.temperature = convertLocalUnitToCelsius(night_cfg.temp, useFahrenheit);
+  if (night_cfg.fan[0] != '\0')
+    settings.fan = night_cfg.fan;
+  if (night_cfg.vane[0] != '\0')
+    settings.vane = night_cfg.vane;
+  if (night_cfg.wvane[0] != '\0')
+    settings.wideVane = night_cfg.wvane;
+  nightSendSettings(settings);
+  night_active = true;
+  ESP_LOGI(TAG, "Night mode on");
+}
+
+void endNight()
+{
+  if (!night_active)
+    return;
+  night_active = false;
+  if (!hp.isConnected())
+    return;
+  heatpumpSettings settings = hp.getSettings();
+  if (night_prev.valid)
+  {
+    settings.power = night_prev.power;
+    if (night_prev.mode[0] != '\0')
+      settings.mode = night_prev.mode;
+    if (night_prev.temp > 0)
+      settings.temperature = night_prev.temp;
+    if (night_prev.fan[0] != '\0')
+      settings.fan = night_prev.fan;
+    if (night_prev.vane[0] != '\0')
+      settings.vane = night_prev.vane;
+    if (night_prev.wvane[0] != '\0')
+      settings.wideVane = night_prev.wvane;
+    night_prev.valid = false;
+    nightSendSettings(settings);
+  }
+  ESP_LOGI(TAG, "Night mode off");
+}
+
+static bool nightInWindow(uint16_t mins)
+{
+  if (night_cfg.fromMin == night_cfg.toMin)
+    return false;
+  if (night_cfg.fromMin < night_cfg.toMin)
+  {
+    return mins >= night_cfg.fromMin && mins < night_cfg.toMin;
+  }
+  // window crosses midnight, e.g. 22:00 - 06:30
+  return mins >= night_cfg.fromMin || mins < night_cfg.toMin;
+}
+
+void checkNight()
+{
+  if (lastNightCheck != 0 && millis() - lastNightCheck < 20000)
+    return;
+  lastNightCheck = millis();
+  time_t now;
+  time(&now);
+  if (now < min_valid_date)
+    return; // clock not synced yet
+  setenv("TZ", timezone.c_str(), 1);
+  tzset();
+  struct tm ti;
+  localtime_r(&now, &ti);
+  uint16_t mins = (uint16_t)(ti.tm_hour * 60 + ti.tm_min);
+  bool inWindow = nightInWindow(mins);
+  if (!inWindow)
+  {
+    night_manual_off = false; // window closed: arm the automatic again
+    if (night_active)
+    {
+      endNight(); // window ended (also ends a manual run at the window edge)
+    }
+    return;
+  }
+  if (night_cfg.autoEn && !night_active && !night_manual_off && hp.isConnected())
+  {
+    heatpumpSettings settings = hp.getSettings();
+    // only auto-apply while the unit is actually running
+    if (settings.power != NULL && strcmp(settings.power, "ON") == 0)
+    {
+      applyNight();
+    }
+  }
+}
+
 void scheduleApply(ScheduleRule &rule, bool start)
 {
   if (rule.addr[0] == '\0')
@@ -1245,6 +1454,7 @@ void initCaptivePortal()
   server.on("/api/devices", handleApiDevices);
   server.on("/api/schedules", handleApiSchedules);
   server.on("/api/adhoc", handleApiAdhoc);
+  server.on("/api/night", handleApiNight);
   server.on("/", handleInitSetup);
   server.on("/save", handleSaveWifiAndMqtt);
   server.on("/reboot", handleReboot);
@@ -2114,6 +2324,8 @@ void handleApiStatus(AsyncWebServerRequest *request)
   json += adhocLeft;
   json += F(",\"am\":");
   json += adhoc_minutes;
+  json += F(",\"night\":");
+  json += night_active ? F("true") : F("false");
   json += F("}");
   request->send(200, "application/json", json);
 }
@@ -2149,6 +2361,76 @@ void handleApiDevices(AsyncWebServerRequest *request)
     return;
   }
   request->send(200, "application/json", devices_json);
+}
+
+void handleApiNight(AsyncWebServerRequest *request)
+{
+  if (!apiAuthOk(request))
+    return;
+  if (request->hasArg(F("cfg")))
+  {
+    night_cfg.autoEn = request->arg(F("en")) == "1";
+    night_cfg.fromMin = parseHM(request->arg(F("f")).c_str());
+    night_cfg.toMin = parseHM(request->arg(F("t")).c_str());
+    strlcpy(night_cfg.mode, request->arg(F("md")).c_str(), sizeof(night_cfg.mode));
+    night_cfg.temp = request->arg(F("tp")).toFloat();
+    strlcpy(night_cfg.fan, request->arg(F("fan")).c_str(), sizeof(night_cfg.fan));
+    strlcpy(night_cfg.vane, request->arg(F("vane")).c_str(), sizeof(night_cfg.vane));
+    strlcpy(night_cfg.wvane, request->arg(F("wv")).c_str(), sizeof(night_cfg.wvane));
+    if (saveNight())
+    {
+      request->send(200, "application/json", String(F("{\"ok\":true}")));
+    }
+    else
+    {
+      request->send(500, "application/json", String(F("{\"err\":\"save\"}")));
+    }
+    return;
+  }
+  if (request->hasArg(F("on")))
+  {
+    if (!hp.isConnected())
+    {
+      request->send(503, "application/json", String(F("{\"err\":\"hvac\"}")));
+      return;
+    }
+    applyNight();
+    request->send(200, "application/json", String(F("{\"ok\":true,\"active\":true}")));
+    return;
+  }
+  if (request->hasArg(F("off")))
+  {
+    endNight();
+    night_manual_off = true; // do not auto-reapply until the window closes
+    request->send(200, "application/json", String(F("{\"ok\":true,\"active\":false}")));
+    return;
+  }
+  // no args: report config + state
+  String json;
+  json.reserve(220);
+  json += F("{\"en\":");
+  json += night_cfg.autoEn ? 1 : 0;
+  char buf[6];
+  snprintf(buf, sizeof(buf), "%02u:%02u", night_cfg.fromMin / 60, night_cfg.fromMin % 60);
+  json += F(",\"f\":\"");
+  json += buf;
+  snprintf(buf, sizeof(buf), "%02u:%02u", night_cfg.toMin / 60, night_cfg.toMin % 60);
+  json += F("\",\"t\":\"");
+  json += buf;
+  json += F("\",\"md\":\"");
+  json += night_cfg.mode;
+  json += F("\",\"tp\":");
+  json += String(night_cfg.temp, 1);
+  json += F(",\"fan\":\"");
+  json += night_cfg.fan;
+  json += F("\",\"vane\":\"");
+  json += night_cfg.vane;
+  json += F("\",\"wv\":\"");
+  json += night_cfg.wvane;
+  json += F("\",\"active\":");
+  json += night_active ? F("true") : F("false");
+  json += F("}");
+  request->send(200, "application/json", json);
 }
 
 void handleApiAdhoc(AsyncWebServerRequest *request)
@@ -4190,6 +4472,7 @@ void loop()
     checkWifiScanRequest();
     checkSchedules();
     checkAdhoc();
+    checkNight();
     checkGitUpdate();
     // Sync HVAC UNIT
     if (!hp.isConnected())
