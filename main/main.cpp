@@ -61,6 +61,9 @@ void handleApiSchedules(AsyncWebServerRequest *request);
 void handleTimers(AsyncWebServerRequest *request);
 void handleDevicesPage(AsyncWebServerRequest *request);
 void handleCss(AsyncWebServerRequest *request);
+void handleControlJs(AsyncWebServerRequest *request);
+void handleTimersJs(AsyncWebServerRequest *request);
+void handleDevicesJs(AsyncWebServerRequest *request);
 uint8_t devices_count = 0; // linked units, parsed from devices_json
 
 // schedule timers (multi-device, executed by this unit)
@@ -276,6 +279,9 @@ void setup()
         // allow the multi-device panel on another unit to read/control this one
         DefaultHeaders::Instance().addHeader(F("Access-Control-Allow-Origin"), F("*"));
         server.on("/style.css", handleCss);
+        server.on("/control.js", handleControlJs);
+        server.on("/timers.js", handleTimersJs);
+        server.on("/devices.js", handleDevicesJs);
         server.on("/api/status", handleApiStatus);
         server.on("/api/control", handleApiControl);
         server.on("/api/devices", handleApiDevices);
@@ -606,10 +612,7 @@ bool loadUnit()
   {
     system_language_index = doc["language_index"].as<byte>();
   }
-  else
-  {
-    system_language_index = 0;
-  }
+  // else: keep the compile-time default language (German)
   return true;
 }
 
@@ -1222,6 +1225,9 @@ void initCaptivePortal()
             { request->redirect(localApIpUrl); }); // windows call home
 
   server.on("/style.css", handleCss);
+  server.on("/control.js", handleControlJs);
+  server.on("/timers.js", handleTimersJs);
+  server.on("/devices.js", handleDevicesJs);
   // allow preparing the multi-device setup and schedules while still in AP mode
   server.on("/devices", handleDevicesPage);
   server.on("/timers", handleTimers);
@@ -2225,13 +2231,33 @@ void handleDevicesPage(AsyncWebServerRequest *request)
   sendWrappedHTML(request, devicesPage);
 }
 
-// stylesheet is served straight from flash: keeps the per-request RAM low
-// (critical on ESP8266) and lets the browser cache it
+// stylesheet and page scripts are served straight from flash: keeps the
+// per-request RAM low (critical on ESP8266) and lets the browser cache them
+static void sendStaticP(AsyncWebServerRequest *request, const String& contentType, PGM_P content)
+{
+  AsyncWebServerResponse *response = request->beginResponse_P(200, contentType, content);
+  response->addHeader(F("Cache-Control"), F("max-age=3600"));
+  request->send(response);
+}
+
 void handleCss(AsyncWebServerRequest *request)
 {
-  AsyncWebServerResponse *response = request->beginResponse_P(200, F("text/css"), html_css);
-  response->addHeader(F("Cache-Control"), F("max-age=86400"));
-  request->send(response);
+  sendStaticP(request, F("text/css"), html_css);
+}
+
+void handleControlJs(AsyncWebServerRequest *request)
+{
+  sendStaticP(request, F("application/javascript"), control_js);
+}
+
+void handleTimersJs(AsyncWebServerRequest *request)
+{
+  sendStaticP(request, F("application/javascript"), timers_js);
+}
+
+void handleDevicesJs(AsyncWebServerRequest *request)
+{
+  sendStaticP(request, F("application/javascript"), devices_js);
 }
 
 String getSelectStatus(const String &curr_status, const String &status)

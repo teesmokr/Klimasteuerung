@@ -142,6 +142,8 @@ const char unit_script_ws[] PROGMEM =
     "}"  
 "</script>";
 
+/* tiny inline part: only the placeholder-filled values; the big static body
+   is served from flash as /control.js so page assembly stays small (ESP8266!) */
 const char control_script_events[] PROGMEM =
     "<script>"
         "var MIN = _MIN_TEMP_;"
@@ -149,6 +151,10 @@ const char control_script_events[] PROGMEM =
         "var STEP = _TEMP_STEP_;"
         "var HEATSUP = _HEAT_MODE_SUPPORT_;"
         "var QUIETSUP = _QUIET_MODE_SUPPORT_;"
+    "</script>"
+    "<script src='/control.js'></script>";
+
+const char control_js[] PROGMEM =
         "var A0 = 135, SWEEP = 270, R = 120, CX = 150, CY = 150;"
         "var st = {min: MIN, max: MAX, step: STEP};"
         "var target = MIN;"
@@ -413,10 +419,12 @@ const char control_script_events[] PROGMEM =
                 "}, false);"
             "}"
         "}"
-    "</script>";
+;
 
 const char timers_script[] PROGMEM =
-    "<script>"
+    "<script src='/timers.js'></script>";
+
+const char timers_js[] PROGMEM =
         "var devices = [];"
         "var scheds = [];"
         "var WD = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];"
@@ -598,10 +606,12 @@ const char timers_script[] PROGMEM =
                 ".then(function(d) { scheds = (d && d.length !== undefined) ? d : []; renderList(); })"
                 ".catch(function() { renderList(); });"
         "}"
-    "</script>";
+;
 
 const char devices_script[] PROGMEM =
-    "<script>"
+    "<script src='/devices.js'></script>";
+
+const char devices_js[] PROGMEM =
         "var devices = [];"
         "function $(i) { return document.getElementById(i); }"
         "function showState(msg, ok) {"
@@ -689,5 +699,5 @@ const char devices_script[] PROGMEM =
                 "})"
                 ".catch(function() { renderList(); });"
         "}"
-    "</script>";
+;
 

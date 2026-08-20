@@ -191,6 +191,11 @@ pages["upgrade.html"] = wrap(tpl["html_page_upgrade"], {
     "_FIRMWARE_UPLOAD_": "",
 })
 
+# static assets served by the firmware from flash
+(OUT / "control.js").write_text(tpl["control_js"], encoding="utf-8")
+(OUT / "timers.js").write_text(tpl["timers_js"], encoding="utf-8")
+(OUT / "devices.js").write_text(tpl["devices_js"], encoding="utf-8")
+
 leftover = {}
 for name, html in pages.items():
     (OUT / name).write_text(html, encoding="utf-8")

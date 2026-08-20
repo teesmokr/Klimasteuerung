@@ -318,7 +318,7 @@ String app_name = "";        /* App name */
 String build_date_time = ""; /* build date time from app desc */
 
 // Multi language support, all store in the flash, just change in the Unit settings
-byte system_language_index = 0; // default language index 0:en
+byte system_language_index = 3; // default language index 3:de (German), 0:en
 // #define MITSU2MQTT_EN_ONLY 1   // un comment to enable English only for debug
 #include "language_util.h" // Multi languages support
 
