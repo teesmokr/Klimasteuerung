@@ -59,7 +59,7 @@ COMMON = {
     "_APP_NAME_": "Mitsubishi2MQTT",
     "_UNIT_NAME_": "HVAC Wohnzimmer",
     "_VERSION_": "2025.07.1 (ESP32)",
-    "_KS_VERSION_": "1.3.0",
+    "_KS_VERSION_": "1.3.2",
 }
 
 def wrap(content, repl):
@@ -181,6 +181,38 @@ pages["timers.html"] = wrap(tpl["timers_script"] + tpl["html_page_timers"], {
 
 pages["devices.html"] = wrap(tpl["devices_script"] + tpl["html_page_devices"], {
     "_TXT_BACK_": "Zurück",
+})
+
+pages["init.html"] = wrap(tpl["html_init_setup"], {
+    "_TXT_INIT_TITLE_": "Ersteinrichtung",
+    "_TXT_UNIT_LANGUAGE_": "Sprache",
+    "_LANGUAGE_OPTIONS_": "<option selected>Deutsch</option><option>English</option>",
+    "_TXT_WIFI_HOST_DESC_": "(keine Leer- oder Sonderzeichen)",
+    "_TXT_WIFI_HOST_": "Gerätename (Hostname)",
+    "_TXT_WIFI_TITLE_": "WLAN-Einstellungen",
+    "_TXT_WIFI_SSID_": "WLAN-Name (SSID)",
+    "_TXT_WIFI_SSID_ENTER_": "(eintippen)",
+    "_TXT_WIFI_SSID_SELECT_": "oder ein Netzwerk auswählen:",
+    "_WIFI_OPTIONS_": "<option>MeinWLAN</option><option>Nachbars-WLAN</option>",
+    "_TXT_WIFI_PSK_": "WLAN-Passwort",
+    "_TXT_WIFI_STATIC_IP_": "Feste IP-Adresse",
+    "_TXT_WIFI_STATIC_GW_": "Gateway",
+    "_TXT_WIFI_STATIC_MASK_": "Subnetzmaske",
+    "_TXT_WIFI_STATIC_DNS_": "DNS-Server",
+    "_WIFI_STATIC_IP_": "", "_WIFI_STATIC_GW_": "", "_WIFI_STATIC_MASK_": "", "_WIFI_STATIC_DNS_": "",
+    "_TXT_MQTT_TITLE_": "MQTT-Einstellungen",
+    "_TXT_MQTT_HOST_": "Server (Host)",
+    "_TXT_MQTT_PORT_DESC": "(Standard 1883)",
+    "_TXT_MQTT_PORT_": "Port",
+    "_TXT_MQTT_USER_": "Benutzername",
+    "_TXT_MQTT_PASSWORD_": "Passwort",
+    "_TXT_MQTT_PH_USER_": "MQTT-Benutzer eingeben",
+    "_TXT_MQTT_PH_PWD_": "MQTT-Passwort eingeben",
+    "_MQTT_HOST_": "", "_MQTT_PORT_": "1883", "_MQTT_USER_": "", "_MQTT_PASSWORD_": "",
+    "_TXT_SAVE_": "Speichern & neu starten",
+    "_TXT_FIRMWARE_UPGRADE_": "Firmware-Aktualisierung",
+    "_FIRMWARE_UPLOAD_": "",
+    "_UNIT_NAME_": "HVAC-A1B2C3",
 })
 
 pages["upgrade.html"] = wrap(tpl["html_page_upgrade"], {

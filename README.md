@@ -14,9 +14,9 @@ made with ❤ in Lingen
 | --- | --- | --- |
 | ![Steuerung](images/webui_control_light.png) | ![Dark Mode](images/webui_control_dark.png) | ![Zeitpläne](images/webui_timers.png) |
 
-| Einstellungen | Status |
-| --- | --- |
-| ![Einstellungen](images/webui_menu.png) | ![Status](images/webui_status.png) |
+| Geräte | Online-Update | Einstellungen |
+| --- | --- | --- |
+| ![Geräte](images/webui_devices.png) | ![Online-Update](images/webui_update.png) | ![Einstellungen](images/webui_menu.png) |
 
 ***
 
@@ -31,7 +31,8 @@ made with ❤ in Lingen
   - Zeitfenster von/bis, Modus, Zieltemperatur, optional „nach Ablauf ausschalten"
   - Steuert auch die anderen hinterlegten Geräte (per HTTP auf deren API)
 - **Modernes Design**: Card-Layout, automatischer Hell-/Dunkelmodus, responsiv für Handy und Desktop, keine externen Ressourcen (funktioniert auch offline im AP-Modus)
-- **JSON-API**: `GET /api/status`, `POST /api/control`, `GET|POST /api/devices`, `GET|POST /api/schedules` (CORS-freigegeben)
+- **Online-Update per Klick**: Die Firmware prüft auf Wunsch das neueste GitHub-Release und installiert es direkt übers Internet (*Einstellungen → Firmware-Aktualisierung*); die installierte Version steht im Fußbereich jeder Seite
+- **JSON-API**: `GET /api/status`, `POST /api/control`, `GET|POST /api/devices`, `GET|POST /api/schedules`, `POST /api/adhoc`, `GET|POST /api/update` (CORS-freigegeben)
 - Alles Weitere vom Original: Home-Assistant-Autodiscovery, MQTT-Steuerung, OTA-Firmware-Update, Erstkonfiguration per WLAN-Access-Point, Login-Schutz, mehrsprachige Systemseiten
 
 ***
@@ -42,9 +43,13 @@ made with ❤ in Lingen
    - ESP32: `firmware.factory.bin` (aus `.pio/build/ESP32DEV/`)
    - Wemos D1 Mini / ESP-01: `firmware.bin` der jeweiligen Build-Umgebung
 2. **Verbinden**: Nach dem ersten Start öffnet das Gerät ein WLAN namens `HVAC-XXXXXXXXXXXX`. Damit verbinden — das Setup öffnet sich automatisch (sonst `http://192.168.4.1` aufrufen). Tipp: Am Handy vorher die mobilen Daten ausschalten, sonst versucht der Browser die Seite übers Mobilfunknetz zu laden.
-3. **Einrichten**: WLAN-Zugangsdaten (und optional MQTT) eintragen, speichern, neu starten. Danach ist das Gerät unter `http://hvac-xxxxxxxxxxxx.local` bzw. seiner IP erreichbar.
+3. **Einrichten**: Gerätename (z. B. `schlafzimmer`), WLAN-Zugangsdaten und optional MQTT eintragen, speichern, neu starten. Danach ist das Gerät unter `http://<name>.local` bzw. seiner IP erreichbar.
+
+   <img src="images/webui_init.png" width="320"/>
+
 4. **Weitere Geräte verbinden**: Unter *Einstellungen → Geräte* alle Einheiten mit Name + IP eintragen (am besten überall dieselbe Liste — dafür gibt es den Button „An alle Geräte verteilen"). Das funktioniert auch ohne angeschlossene Klimaanlage und sogar im AP-Modus — die Verknüpfung lässt sich also vor der Installation vorbereiten. Danach oben auf der Steuerungs-Seite per Tab umschalten; Geräte am besten per IP eintragen und aufrufen, damit sich jedes Gerät selbst aus den Tabs ausblendet.
-5. **Zeitpläne**: Im Hauptmenü unter *Zeitpläne* Regeln anlegen. Die Uhrzeit kommt per NTP; die Zeitzone steht standardmäßig auf Mitteleuropa (`CET-1CEST`, mit Sommerzeit) und ist unter *Einstellungen → Sonstiges* änderbar.
+5. **Zeitpläne & Ad-hoc**: Unter *Einstellungen → Zeitpläne* Regeln anlegen (Wochentage oder „alle N Tage") und die Laufzeit des ⚡ Ad-hoc-Buttons festlegen. Die Uhrzeit kommt per NTP; die Zeitzone steht standardmäßig auf Mitteleuropa (`CET-1CEST`, mit Sommerzeit) und ist unter *Einstellungen → Sonstiges* änderbar.
+6. **Aktuell bleiben**: Neue Versionen installieren sich per Klick — *Einstellungen → Firmware-Aktualisierung → Nach Updates suchen*.
 
 > ⚠️ **Achtung**: Für den Anschluss muss die Inneneinheit geöffnet werden (`CN105`-Stecker auf der Hauptplatine). Vorher unbedingt die Stromversorgung trennen — unsachgemäßer Umgang kann zu Wasserschäden, Stromschlag oder Brand führen!
 
