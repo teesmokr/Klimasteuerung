@@ -74,23 +74,17 @@ def wrap(content, repl):
 
 pages = {}
 
-pages["menu_root.html"] = wrap(tpl["html_menu_root"], {
-    "_SHOW_LOGOUT_": "1", "_SHOW_CONTROL_": "1",
-    "_TXT_HOME_PAGE_": "Startseite",
-    "_TXT_CONTROL_": "Steuerung",
-    "_TXT_SETUP_": "Einstellungen",
-    "_TXT_STATUS_": "Status",
-    "_TXT_FW_UPGRADE_": "Firmware-Aktualisierung",
-    "_TXT_REBOOT_": "Neustart",
-    "_TXT_LOGOUT_": "Abmelden",
-})
-
 pages["menu_setup.html"] = wrap(tpl["html_menu_setup"], {
+    "_SHOW_LOGOUT_": "1",
     "_TXT_SETUP_PAGE_": "Einstellungen",
     "_TXT_MQTT_": "MQTT",
     "_TXT_WIFI_": "WLAN",
     "_TXT_UNIT_": "Einheit",
     "_TXT_OTHERS_": "Sonstiges",
+    "_TXT_STATUS_": "Status",
+    "_TXT_FW_UPGRADE_": "Firmware-Aktualisierung",
+    "_TXT_REBOOT_": "Neustart",
+    "_TXT_LOGOUT_": "Abmelden",
     "_TXT_RESET_CONFIRM_": "Wirklich alle Einstellungen zur\u00fccksetzen?",
     "_TXT_RESET_": "Einstellungen zur\u00fccksetzen",
     "_TXT_BACK_": "Zur\u00fcck",
@@ -115,7 +109,7 @@ pages["control.html"] = wrap(control, {
     "_TXT_F_HEAT_": "Heizen", "_TXT_F_FAN_": "L\u00fcften", "_TXT_F_QUIET_": "Leise",
     "_TXT_F_LOW_": "Niedrig", "_TXT_F_MEDIUM_": "Mittel", "_TXT_F_MIDDLE_": "H\u00f6her",
     "_TXT_F_HIGH_": "Hoch", "_TXT_F_SWING_": "Schwenken", "_TXT_F_POS_": "Position",
-    "_TXT_BACK_": "Zur\u00fcck",
+    "_TXT_BACK_": "Zur\u00fcck", "_TXT_SETUP_": "Einstellungen",
     "_ROOMTEMP_": "22.5", "_TEMP_SCALE_": "C", "_TEMP_": "21.5",
     "_POWER_": "checked",
     "_MODE_A_": "", "_MODE_D_": "", "_MODE_C_": "selected", "_MODE_H_": "", "_MODE_F_": "",

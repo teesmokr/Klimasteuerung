@@ -175,6 +175,7 @@ const PROGMEM char *console_file = "/console.log";
 const PROGMEM char *others_conf = "/others.json";
 const PROGMEM char *devices_conf = "/devices.json";
 const PROGMEM char *schedules_conf = "/schedules.json";
+const PROGMEM char *adhoc_conf = "/adhoc.json";
 // pinouts
 const PROGMEM uint8_t blueLedPin = 2; // The ESP32 has an internal blue LED at D2 (GPIO 02)
 // keep LED off (check board schematic)
@@ -187,6 +188,7 @@ const PROGMEM char *console_file = "console.log";
 const PROGMEM char *others_conf = "others.json";
 const PROGMEM char *devices_conf = "devices.json";
 const PROGMEM char *schedules_conf = "schedules.json";
+const PROGMEM char *adhoc_conf = "adhoc.json";
 // pinouts
 const PROGMEM uint8_t blueLedPin = LED_BUILTIN; // Onboard LED = digital pin 2 "D4" (blue LED on WEMOS D1-Mini)
 // keep LED off (For Wemos D1-Mini), Other board check the schematic

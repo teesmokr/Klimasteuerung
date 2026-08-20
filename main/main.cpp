@@ -89,6 +89,15 @@ bool saveSchedules(const String& schedulesJson);
 bool parseSchedules(const String& json);
 void checkSchedules();
 void scheduleApply(ScheduleRule &rule, bool start);
+
+// ad-hoc run: start now in the current mode, auto power-off after a
+// configurable duration (RAM only - a reboot cancels the auto-off)
+uint16_t adhoc_minutes = 60;
+unsigned long adhocEndMillis = 0;
+bool loadAdhoc();
+bool saveAdhoc(uint16_t minutes);
+void checkAdhoc();
+void handleApiAdhoc(AsyncWebServerRequest *request);
 void handleMetrics(AsyncWebServerRequest *request);
 void handleLogin(AsyncWebServerRequest *request);
 void handleUpgrade(AsyncWebServerRequest *request);
@@ -210,6 +219,7 @@ void setup()
   loadUnit();
   loadDevices();
   loadSchedules();
+  loadAdhoc();
 #ifdef ESP32
   WiFi.setHostname(hostname.c_str());
 #else
@@ -270,6 +280,7 @@ void setup()
         server.on("/api/control", handleApiControl);
         server.on("/api/devices", handleApiDevices);
         server.on("/api/schedules", handleApiSchedules);
+        server.on("/api/adhoc", handleApiAdhoc);
         server.on("/", handleRoot);
         server.on("/control", handleControl);
         server.on("/timers", handleTimers);
@@ -861,6 +872,78 @@ bool saveSchedules(const String& schedulesJson)
   return true;
 }
 
+bool loadAdhoc()
+{
+  if (!SPIFFS.exists(adhoc_conf))
+  {
+    return false;
+  }
+  File configFile = SPIFFS.open(adhoc_conf, "r");
+  if (!configFile)
+  {
+    return false;
+  }
+  const size_t capacity = JSON_OBJECT_SIZE(1) + 32;
+  DynamicJsonDocument doc(capacity);
+  DeserializationError err = deserializeJson(doc, configFile);
+  configFile.close();
+  if (err)
+  {
+    return false;
+  }
+  uint16_t m = doc["m"] | 60;
+  if (m >= 5 && m <= 720)
+  {
+    adhoc_minutes = m;
+  }
+  return true;
+}
+
+bool saveAdhoc(uint16_t minutes)
+{
+  if (minutes < 5 || minutes > 720)
+  {
+    return false;
+  }
+  const size_t capacity = JSON_OBJECT_SIZE(1) + 32;
+  DynamicJsonDocument doc(capacity);
+  doc["m"] = minutes;
+  File configFile = SPIFFS.open(adhoc_conf, "w");
+  if (!configFile)
+  {
+    return false;
+  }
+  serializeJson(doc, configFile);
+  configFile.close();
+  adhoc_minutes = minutes;
+  return true;
+}
+
+static void adhocPower(bool on)
+{
+  if (!hp.isConnected())
+    return;
+  heatpumpSettings settings = hp.getSettings();
+  settings.power = on ? "ON" : "OFF";
+  hp.setSettings(settings);
+  if (hp.getSettings() == hp.getWantedSettings())
+  {
+    return; // nothing to send
+  }
+  requestHpUpdate = true;
+  requestHpUpdateTime = millis() + 10;
+}
+
+void checkAdhoc()
+{
+  if (adhocEndMillis != 0 && (long)(millis() - adhocEndMillis) >= 0)
+  {
+    adhocEndMillis = 0;
+    ESP_LOGI(TAG, "Ad-hoc run finished, power off");
+    adhocPower(false);
+  }
+}
+
 void scheduleApply(ScheduleRule &rule, bool start)
 {
   if (rule.addr[0] == '\0')
@@ -1144,6 +1227,7 @@ void initCaptivePortal()
   server.on("/timers", handleTimers);
   server.on("/api/devices", handleApiDevices);
   server.on("/api/schedules", handleApiSchedules);
+  server.on("/api/adhoc", handleApiAdhoc);
   server.on("/", handleInitSetup);
   server.on("/save", handleSaveWifiAndMqtt);
   server.on("/reboot", handleReboot);
@@ -1401,11 +1485,8 @@ void handleNotFound(AsyncWebServerRequest *request)
   }
   else
   {
-    String menuRootPage = FPSTR(html_menu_root);
-    menuRootPage.replace(F("_SHOW_LOGOUT_"), (String)(login_password.length() > 0));
-    // not show control button if hp not connected
-    menuRootPage.replace(F("_SHOW_CONTROL_"), (String)(hp.isConnected() || devices_count > 0));
-    sendWrappedHTML(request, menuRootPage);
+    // unknown URLs go to the start page (the control panel)
+    request->redirect("/");
   }
 }
 
@@ -1472,20 +1553,8 @@ void handleRoot(AsyncWebServerRequest *request)
   }
   else
   {
-    String menuRootPage = FPSTR(html_menu_root);
-    // localize
-    menuRootPage.replace(F("_TXT_HOME_PAGE_"), translatedWord(FL_(txt_home_page)));
-    menuRootPage.replace(F("_TXT_CONTROL_"), translatedWord(FL_(txt_control)));
-    menuRootPage.replace(F("_TXT_SETUP_"), translatedWord(FL_(txt_setup)));
-    menuRootPage.replace(F("_TXT_STATUS_"), translatedWord(FL_(txt_status)));
-    menuRootPage.replace(F("_TXT_FW_UPGRADE_"), translatedWord(FL_(txt_firmware_upgrade)));
-    menuRootPage.replace(F("_TXT_REBOOT_"), translatedWord(FL_(txt_reboot)));
-    menuRootPage.replace(F("_TXT_LOGOUT_"), translatedWord(FL_(txt_logout)));
-    // set data
-    menuRootPage.replace(F("_SHOW_LOGOUT_"), (String)(login_password.length() > 0));
-    // not show control button if hp not connected
-    menuRootPage.replace(F("_SHOW_CONTROL_"), (String)(hp.isConnected() || devices_count > 0));
-    sendWrappedHTML(request, menuRootPage);
+    // the control panel is the start page; everything else lives in the setup menu
+    handleControl(request);
   }
 }
 
@@ -1580,9 +1649,14 @@ void handleSetup(AsyncWebServerRequest *request)
     menuSetupPage.replace(F("_TXT_WIFI_"), translatedWord(FL_(txt_wifi)));
     menuSetupPage.replace(F("_TXT_UNIT_"), translatedWord(FL_(txt_unit)));
     menuSetupPage.replace(F("_TXT_OTHERS_"), translatedWord(FL_(txt_others)));
+    menuSetupPage.replace(F("_TXT_STATUS_"), translatedWord(FL_(txt_status)));
+    menuSetupPage.replace(F("_TXT_FW_UPGRADE_"), translatedWord(FL_(txt_firmware_upgrade)));
+    menuSetupPage.replace(F("_TXT_REBOOT_"), translatedWord(FL_(txt_reboot)));
+    menuSetupPage.replace(F("_TXT_LOGOUT_"), translatedWord(FL_(txt_logout)));
     menuSetupPage.replace(F("_TXT_RESET_CONFIRM_"), translatedWord(FL_(txt_reset_confirm)));
     menuSetupPage.replace(F("_TXT_RESET_"), translatedWord(FL_(txt_reset)));
     menuSetupPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
+    menuSetupPage.replace(F("_SHOW_LOGOUT_"), (String)(login_password.length() > 0));
     sendWrappedHTML(request, menuSetupPage);
   }
 }
@@ -2004,6 +2078,17 @@ void handleApiStatus(AsyncWebServerRequest *request)
   json += supportHeatMode ? F("true") : F("false");
   json += F(",\"quiet\":");
   json += supportQuietMode ? F("true") : F("false");
+  uint16_t adhocLeft = 0;
+  if (adhocEndMillis != 0)
+  {
+    long remain = (long)(adhocEndMillis - millis());
+    if (remain > 0)
+      adhocLeft = (uint16_t)((remain + 59999L) / 60000L);
+  }
+  json += F(",\"adhoc\":");
+  json += adhocLeft;
+  json += F(",\"am\":");
+  json += adhoc_minutes;
   json += F("}");
   request->send(200, "application/json", json);
 }
@@ -2039,6 +2124,62 @@ void handleApiDevices(AsyncWebServerRequest *request)
     return;
   }
   request->send(200, "application/json", devices_json);
+}
+
+void handleApiAdhoc(AsyncWebServerRequest *request)
+{
+  if (!apiAuthOk(request))
+    return;
+  if (request->hasArg(F("set")))
+  {
+    uint16_t m = (uint16_t)request->arg(F("set")).toInt();
+    if (saveAdhoc(m))
+    {
+      request->send(200, "application/json", String(F("{\"ok\":true,\"m\":")) + m + F("}"));
+    }
+    else
+    {
+      request->send(400, "application/json", String(F("{\"err\":\"invalid\"}")));
+    }
+    return;
+  }
+  if (request->hasArg(F("stop")))
+  {
+    adhocEndMillis = 0;
+    adhocPower(false);
+    request->send(200, "application/json", String(F("{\"ok\":true,\"left\":0}")));
+    return;
+  }
+  if (request->hasArg(F("start")))
+  {
+    if (!hp.isConnected())
+    {
+      request->send(503, "application/json", String(F("{\"err\":\"hvac\"}")));
+      return;
+    }
+    uint16_t m = adhoc_minutes;
+    if (request->hasArg(F("m")))
+    {
+      uint16_t mm = (uint16_t)request->arg(F("m")).toInt();
+      if (mm >= 5 && mm <= 720)
+        m = mm;
+    }
+    adhocEndMillis = millis() + (unsigned long)m * 60000UL;
+    if (adhocEndMillis == 0)
+      adhocEndMillis = 1; // avoid the 'inactive' sentinel on wrap
+    adhocPower(true);
+    request->send(200, "application/json", String(F("{\"ok\":true,\"left\":")) + m + F("}"));
+    return;
+  }
+  // no args: report config + remaining minutes
+  uint16_t left = 0;
+  if (adhocEndMillis != 0)
+  {
+    long remain = (long)(adhocEndMillis - millis());
+    if (remain > 0)
+      left = (uint16_t)((remain + 59999L) / 60000L);
+  }
+  request->send(200, "application/json", String(F("{\"m\":")) + adhoc_minutes + F(",\"left\":") + left + F("}"));
 }
 
 void handleApiSchedules(AsyncWebServerRequest *request)
@@ -2189,11 +2330,11 @@ void handleControl(AsyncWebServerRequest *request)
       return;
   }
   // without a HVAC connection the page is still useful as multi-device panel;
-  // only redirect when there are no linked units either
+  // only redirect (to the setup menu) when there are no linked units either
   if (!hp.isConnected() && devices_count == 0)
   {
     AsyncWebServerResponse *response = request->beginResponse(301);
-    response->addHeader("Location", "/status");
+    response->addHeader("Location", "/setup");
     response->addHeader("Cache-Control", "no-cache");
     request->send(response);
     return;
@@ -2241,7 +2382,8 @@ void handleControl(AsyncWebServerRequest *request)
   controlPage += getVaneSelect(String(settings.vane));
   controlPage += getWideVaneSelect(String(settings.wideVane));
   
-  htmlControlPage = FPSTR(html_page_control_footer); 
+  htmlControlPage = FPSTR(html_page_control_footer);
+  htmlControlPage.replace(F("_TXT_SETUP_"), translatedWord(FL_(txt_setup)));
   htmlControlPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
   controlPage += htmlControlPage;
   htmlControlPage = "";
@@ -3841,6 +3983,7 @@ void loop()
     checkHpUpdateRequest();
     checkWifiScanRequest();
     checkSchedules();
+    checkAdhoc();
     // Sync HVAC UNIT
     if (!hp.isConnected())
     {
