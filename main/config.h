@@ -42,8 +42,12 @@ extern "C"
 #endif
 #ifdef ESP32
 #include <HTTPClient.h> // schedule timer: control remote units
+#include <WiFiClientSecure.h> // online update from GitHub releases
+#include <HTTPUpdate.h>
 #else
 #include <ESP8266HTTPClient.h> // schedule timer: control remote units
+#include <WiFiClientSecureBearSSL.h> // online update from GitHub releases
+#include <ESP8266httpUpdate.h>
 #endif
 #include <espMqttClient.h>     // espMqttClient
 #include <ESPAsyncWebServer.h> // ESPAsyncWebServer
@@ -163,6 +167,11 @@ unsigned long requestWifiScanTime = 0;
 unsigned lastWifiScanMillis;
 
 const PROGMEM char *m2mqtt_version = "2025.10.30";
+const PROGMEM char *ks_version = "1.3.0"; // Klimasteuerung release, must match the GitHub release tag (without the leading v)
+const PROGMEM char *ks_update_repo = "teesmokr/Klimasteuerung"; // GitHub repo used for the online update
+#ifndef KS_UPDATE_FILE
+#define KS_UPDATE_FILE "" // set per build env in platformio.ini; empty disables the online update
+#endif
 
 // Define global variables for files
 int HP_TX = 0; // variable for the ESP32 custom TX pin, 0 is the defautl and it use hardware serial 0

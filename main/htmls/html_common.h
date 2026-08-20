@@ -792,6 +792,7 @@ const char html_common_footer[] PROGMEM =
     "</script>"
     "<div class='foot'>"
        "<span>made with <span class='hrt'>&#10084;</span> in Lingen</span>"
+       " <span>v_KS_VERSION_</span>"
     "</div>"
     "</div>"
   "</div>"

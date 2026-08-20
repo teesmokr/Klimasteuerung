@@ -101,6 +101,16 @@ bool loadAdhoc();
 bool saveAdhoc(uint16_t minutes);
 void checkAdhoc();
 void handleApiAdhoc(AsyncWebServerRequest *request);
+
+// online update from GitHub releases (issue #1)
+// 0 = idle, 1 = checking, 2 = updating, 3 = error (see upd_error)
+uint8_t upd_state = 0;
+String upd_latest = "";
+String upd_error = "";
+bool requestVersionCheck = false;
+bool requestGitUpdate = false;
+void checkGitUpdate();
+void handleApiUpdate(AsyncWebServerRequest *request);
 void handleMetrics(AsyncWebServerRequest *request);
 void handleLogin(AsyncWebServerRequest *request);
 void handleUpgrade(AsyncWebServerRequest *request);
@@ -306,6 +316,7 @@ void setup()
         }
         if (!isSecureEnable()) {
             server.on("/upgrade", handleUpgrade);
+            server.on("/api/update", handleApiUpdate);
             server.on("/upload", AsyncWebRequestMethod::HTTP_ALL, handleUploadDone, handleUploadLoop);
 #ifdef ESP32
             Update.onProgress(otaUpdateProgress);
@@ -1447,6 +1458,7 @@ void sendWrappedHTML(AsyncWebServerRequest *request, const String &content)
     return;
 
   String footer = FPSTR(html_common_footer);
+  footer.replace(F("_KS_VERSION_"), ks_version);
   footer.replace(F("_APP_NAME_"), appName);
   footer.replace(F("_UNIT_NAME_"), hostname);
   #ifdef ESP32
@@ -2188,6 +2200,142 @@ void handleApiAdhoc(AsyncWebServerRequest *request)
   request->send(200, "application/json", String(F("{\"m\":")) + adhoc_minutes + F(",\"left\":") + left + F("}"));
 }
 
+// resolve the latest release tag without the GitHub API: /releases/latest
+// answers with a redirect whose Location header ends in /tag/vX.Y.Z
+static String fetchLatestVersion()
+{
+#ifdef ESP32
+  WiFiClientSecure client;
+  client.setInsecure();
+#else
+  BearSSL::WiFiClientSecure client;
+  client.setInsecure();
+#endif
+  HTTPClient http;
+  http.setTimeout(8000);
+  http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+  String url = String(F("https://github.com/")) + ks_update_repo + F("/releases/latest");
+  const char *headerKeys[] = {"Location"};
+  http.collectHeaders(headerKeys, 1);
+  String tag = "";
+  if (http.begin(client, url))
+  {
+    int code = http.GET();
+    if (code == 301 || code == 302)
+    {
+      String loc = http.header("Location");
+      int idx = loc.lastIndexOf(F("/tag/"));
+      if (idx >= 0)
+      {
+        tag = loc.substring(idx + 5);
+        if (tag.startsWith("v"))
+        {
+          tag = tag.substring(1);
+        }
+      }
+    }
+    http.end();
+  }
+  return tag;
+}
+
+void checkGitUpdate()
+{
+  if (requestVersionCheck)
+  {
+    requestVersionCheck = false;
+    upd_state = 1;
+    String tag = fetchLatestVersion();
+    if (tag.isEmpty())
+    {
+      upd_state = 3;
+      upd_error = F("Version konnte nicht abgerufen werden");
+    }
+    else
+    {
+      upd_latest = tag;
+      upd_state = 0;
+      upd_error = "";
+    }
+  }
+  if (requestGitUpdate)
+  {
+    requestGitUpdate = false;
+    if (strlen(KS_UPDATE_FILE) == 0)
+    {
+      upd_state = 3;
+      upd_error = F("Online-Update in diesem Build deaktiviert");
+      return;
+    }
+    upd_state = 2;
+    // free as much RAM as possible for TLS (important on ESP8266)
+    if (mqttClient != nullptr && mqttClient->connected())
+    {
+      mqttClient->disconnect();
+    }
+    String url = String(F("https://github.com/")) + ks_update_repo + F("/releases/latest/download/") + KS_UPDATE_FILE;
+    ESP_LOGI(TAG, "Online update from %s", url.c_str());
+#ifdef ESP32
+    WiFiClientSecure client;
+    client.setInsecure();
+    httpUpdate.rebootOnUpdate(true);
+    httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+    t_httpUpdate_return ret = httpUpdate.update(client, url);
+#else
+    BearSSL::WiFiClientSecure client;
+    client.setInsecure();
+    ESPhttpUpdate.rebootOnUpdate(true);
+    ESPhttpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+    t_httpUpdate_return ret = ESPhttpUpdate.update(client, url);
+#endif
+    // on success the device reboots and never gets here
+    if (ret != HTTP_UPDATE_OK)
+    {
+      upd_state = 3;
+#ifdef ESP32
+      upd_error = httpUpdate.getLastErrorString();
+#else
+      upd_error = ESPhttpUpdate.getLastErrorString();
+#endif
+      ESP_LOGE(TAG, "Online update failed: %s", upd_error.c_str());
+    }
+  }
+}
+
+void handleApiUpdate(AsyncWebServerRequest *request)
+{
+  if (!apiAuthOk(request))
+    return;
+  if (request->hasArg(F("check")))
+  {
+    requestVersionCheck = true;
+    upd_state = 1;
+    request->send(200, "application/json", String(F("{\"ok\":true}")));
+    return;
+  }
+  if (request->hasArg(F("start")))
+  {
+    requestGitUpdate = true;
+    upd_state = 2;
+    request->send(200, "application/json", String(F("{\"ok\":true}")));
+    return;
+  }
+  String json;
+  json.reserve(160);
+  json += F("{\"cur\":\"");
+  json += ks_version;
+  json += F("\",\"latest\":\"");
+  json += upd_latest;
+  json += F("\",\"state\":");
+  json += upd_state;
+  json += F(",\"err\":\"");
+  String err = upd_error;
+  err.replace("\"", "'");
+  json += err;
+  json += F("\"}");
+  request->send(200, "application/json", json);
+}
+
 void handleApiSchedules(AsyncWebServerRequest *request)
 {
   if (!apiAuthOk(request))
@@ -2595,6 +2743,7 @@ void handleUpgrade(AsyncWebServerRequest *request)
   upgradePage.replace(F("_TXT_UPGRADE_TITLE_"), translatedWord(FL_(txt_upgrade_title)));
   upgradePage.replace(F("_TXT_UPGRADE_INFO_"), translatedWord(FL_(txt_upgrade_info)));
   upgradePage.replace(F("_TXT_UPGRADE_START_"), translatedWord(FL_(txt_upgrade_start)));
+  upgradePage.replace(F("_KS_VERSION_"), ks_version);
 
   sendWrappedHTML(request, upgradePage);
 }
@@ -4010,6 +4159,7 @@ void loop()
     checkWifiScanRequest();
     checkSchedules();
     checkAdhoc();
+    checkGitUpdate();
     // Sync HVAC UNIT
     if (!hp.isConnected())
     {
