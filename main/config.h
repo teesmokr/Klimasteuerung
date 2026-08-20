@@ -121,7 +121,7 @@ Ticker ticker;
 
 // Captive portal variables, only used for config page
 const byte DNS_PORT = 53;
-IPAddress apIP(8, 8, 8, 8);
+IPAddress apIP(192, 168, 4, 1); // private AP address: phones with mobile data route public IPs (like 8.8.8.8) over LTE instead of the AP
 IPAddress netMsk(255, 255, 255, 0);
 DNSServer dnsServer;
 
@@ -143,7 +143,7 @@ unsigned long lastRemoteTemp;
 // Local state
 StaticJsonDocument<JSON_OBJECT_SIZE(12)> rootInfo;
 String wifi_list = "";                            // cache wifi scan result
-const String localApIpUrl = "http://8.8.8.8";     // a string version of the local IP with http, used for redirecting clients to your webpage
+const String localApIpUrl = "http://192.168.4.1";     // a string version of the local IP with http, used for redirecting clients to your webpage
 String unique_id = "";                            // cache board unique id
 
 // Web OTA

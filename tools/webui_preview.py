@@ -63,6 +63,9 @@ COMMON = {
 
 def wrap(content, repl):
     page = tpl["html_common_header"] + content + tpl["html_common_footer"]
+    # firmware serves the stylesheet as /style.css; inline it for standalone previews
+    page = page.replace("<link rel='stylesheet' href='/style.css'>",
+                        "<style>" + tpl["html_css"] + "</style>")
     for k, v in sorted({**COMMON, **repl}.items(), key=lambda kv: -len(kv[0])):
         page = page.replace(k, v)
     # any leftover tokens -> highlight

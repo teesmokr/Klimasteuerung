@@ -14,14 +14,7 @@
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
-const char html_common_header[] PROGMEM =
-"<!DOCTYPE html>"
-"<html lang='en' class=''>"
-"<head>"
-    "<meta charset='utf-8'>"
-    "<meta name='viewport' content='width=device-width,initial-scale=1,user-scalable=no' />"
-    "<title>Klimasteuerung - _UNIT_NAME_</title>"
-    "<style>"
+const char html_css[] PROGMEM =
         ":root {"
             "--bg: #f2f5fa;"
             "--card: #ffffff;"
@@ -727,7 +720,16 @@ const char html_common_header[] PROGMEM =
             "color: #ef4444;"
             "font-size: .8rem;"
         "}"
-    "</style>"
+;
+
+const char html_common_header[] PROGMEM =
+"<!DOCTYPE html>"
+"<html lang='en' class=''>"
+"<head>"
+    "<meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1,user-scalable=no' />"
+    "<title>Klimasteuerung - _UNIT_NAME_</title>"
+    "<link rel='stylesheet' href='/style.css'>"
 "</head>"
 "<body>"
   "<div class='main'>"

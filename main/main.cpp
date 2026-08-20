@@ -59,6 +59,7 @@ void handleApiControl(AsyncWebServerRequest *request);
 void handleApiDevices(AsyncWebServerRequest *request);
 void handleApiSchedules(AsyncWebServerRequest *request);
 void handleTimers(AsyncWebServerRequest *request);
+void handleCss(AsyncWebServerRequest *request);
 
 // schedule timers (multi-device, executed by this unit)
 #define MAX_SCHEDULES 8
@@ -262,6 +263,7 @@ void setup()
     if (!_webPanelDisable) {
         // allow the multi-device panel on another unit to read/control this one
         DefaultHeaders::Instance().addHeader(F("Access-Control-Allow-Origin"), F("*"));
+        server.on("/style.css", handleCss);
         server.on("/api/status", handleApiStatus);
         server.on("/api/control", handleApiControl);
         server.on("/api/devices", handleApiDevices);
@@ -1103,6 +1105,7 @@ void initCaptivePortal()
   server.on("/ncsi.txt", [](AsyncWebServerRequest *request)
             { request->redirect(localApIpUrl); }); // windows call home
 
+  server.on("/style.css", handleCss);
   server.on("/", handleInitSetup);
   server.on("/save", handleSaveWifiAndMqtt);
   server.on("/reboot", handleReboot);
@@ -2029,6 +2032,15 @@ void handleTimers(AsyncWebServerRequest *request)
   timersPage += FPSTR(html_page_timers);
   timersPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
   sendWrappedHTML(request, timersPage);
+}
+
+// stylesheet is served straight from flash: keeps the per-request RAM low
+// (critical on ESP8266) and lets the browser cache it
+void handleCss(AsyncWebServerRequest *request)
+{
+  AsyncWebServerResponse *response = request->beginResponse_P(200, F("text/css"), html_css);
+  response->addHeader(F("Cache-Control"), F("max-age=86400"));
+  request->send(response);
 }
 
 String getSelectStatus(const String &curr_status, const String &status)

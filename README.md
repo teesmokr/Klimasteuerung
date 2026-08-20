@@ -39,7 +39,7 @@ made with ❤ in Lingen
 1. **Flashen** (einmalig per USB): [esptool-js](https://espressif.github.io/esptool-js/) im Chrome/Edge-Browser öffnen, ESP verbinden und die passende Datei bei Flash-Adresse `0x0` flashen:
    - ESP32: `firmware.factory.bin` (aus `.pio/build/ESP32DEV/`)
    - Wemos D1 Mini / ESP-01: `firmware.bin` der jeweiligen Build-Umgebung
-2. **Verbinden**: Nach dem ersten Start öffnet das Gerät ein WLAN namens `HVAC-XXXXXXXXXXXX`. Damit verbinden — das Setup öffnet sich automatisch (sonst `http://8.8.8.8` aufrufen).
+2. **Verbinden**: Nach dem ersten Start öffnet das Gerät ein WLAN namens `HVAC-XXXXXXXXXXXX`. Damit verbinden — das Setup öffnet sich automatisch (sonst `http://192.168.4.1` aufrufen). Tipp: Am Handy vorher die mobilen Daten ausschalten, sonst versucht der Browser die Seite übers Mobilfunknetz zu laden.
 3. **Einrichten**: WLAN-Zugangsdaten (und optional MQTT) eintragen, speichern, neu starten. Danach ist das Gerät unter `http://hvac-xxxxxxxxxxxx.local` bzw. seiner IP erreichbar.
 4. **Weitere Geräte verbinden**: Auf dem Wunsch-Master unter *Steuerung* → ⚙ die anderen Einheiten mit Name + IP hinzufügen. Danach oben per Tab umschalten.
 5. **Zeitpläne**: Im Hauptmenü unter *Zeitpläne* Regeln anlegen. Die Uhrzeit kommt per NTP; Zeitzone und NTP-Server stehen unter *Einstellungen → Sonstiges*.
