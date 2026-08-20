@@ -1284,6 +1284,10 @@ boolean initWifi()
 #ifdef ESP32
   WiFi.persistent(false); // fix crash esp32 https://github.com/espressif/arduino-esp32/issues/2025
 #endif
+  // Configure the AP subnet BEFORE starting the AP: on arduino-esp32 core 3.x
+  // configuring only after softAP() leaves the DHCP server on the old pool and
+  // clients never get a lease (association drops right after connecting).
+  WiFi.softAPConfig(apIP, apIP, netMsk);
   if (!connectWifiSuccess)
   {
     // Set AP password when falling back to AP on fail
@@ -1295,6 +1299,8 @@ boolean initWifi()
     WiFi.softAP(hostname.c_str());
   }
   delay(2000); // VERY IMPORTANT
+  // re-apply for cores that only create the AP netif on softAP(); same values,
+  // so the DHCP pool is not disturbed where the first call already took effect
   WiFi.softAPConfig(apIP, apIP, netMsk);
   ESP_LOGE(TAG, "IP address: %s", WiFi.softAPIP().toString().c_str());
   ticker.attach(0.2, tick); // Start LED to flash rapidly to indicate we are ready for setting up the wifi-connection (entered captive portal).
