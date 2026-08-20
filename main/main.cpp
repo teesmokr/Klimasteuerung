@@ -1522,6 +1522,10 @@ void handleSaveWifiAndMqtt(AsyncWebServerRequest *request)
       ssid = request->arg("network"); // auto scan network
     }
     saveWifi(ssid, request->arg("psk"), request->arg("hn"), request->arg("otapwd"), request->arg("stip"), request->arg("stgw"), request->arg("stmask"), request->arg("stdns"));
+    if (!request->arg("hn").isEmpty())
+    {
+      hostname = request->arg("hn"); // so the reboot message shows the new address right away
+    }
     if (request->hasArg("mh"))
     {
       saveMqtt(request->arg("fn"), request->arg("mh"), request->arg("ml"), request->arg("mu"), request->arg("mp"), request->arg("mt"), "");
@@ -1585,6 +1589,9 @@ void handleInitSetup(AsyncWebServerRequest *request)
   initSetupPage.replace(F("_TXT_INIT_TITLE_"), translatedWord(FL_(txt_init_title)));
   initSetupPage.replace(F("_TXT_WIFI_TITLE_"), translatedWord(FL_(txt_wifi_title)));
   initSetupPage.replace(F("_TXT_UNIT_LANGUAGE_"), translatedWord(FL_(txt_unit_language)));
+  initSetupPage.replace(F("_TXT_WIFI_HOST_DESC_"), translatedWord(FL_(txt_wifi_hostname_desc))); // before _TXT_WIFI_HOST_ (prefix!)
+  initSetupPage.replace(F("_TXT_WIFI_HOST_"), translatedWord(FL_(txt_wifi_hostname)));
+  initSetupPage.replace(F("_UNIT_NAME_"), hostname);
   initSetupPage.replace(F("_TXT_WIFI_SSID_ENTER_"), translatedWord(FL_(txt_wifi_ssid_enter)));
   initSetupPage.replace(F("_TXT_WIFI_SSID_SELECT_"), translatedWord(FL_(txt_wifi_ssid_select)));
   initSetupPage.replace(F("_TXT_WIFI_SSID_"), translatedWord(FL_(txt_wifi_ssid)));
