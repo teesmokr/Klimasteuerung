@@ -2217,9 +2217,11 @@ static String fetchLatestVersion()
 #else
   BearSSL::WiFiClientSecure client;
   client.setInsecure();
+  client.setBufferSizes(16384, 512); // small TX buffer halves the TLS RAM need
 #endif
   HTTPClient http;
   http.setTimeout(8000);
+  http.setUserAgent(F("Klimasteuerung"));
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
   String url = String(F("https://github.com/")) + ks_update_repo + F("/releases/latest");
   const char *headerKeys[] = {"Location"};
@@ -2228,7 +2230,7 @@ static String fetchLatestVersion()
   if (http.begin(client, url))
   {
     int code = http.GET();
-    if (code == 301 || code == 302)
+    if (code >= 300 && code < 400)
     {
       String loc = http.header("Location");
       int idx = loc.lastIndexOf(F("/tag/"));
@@ -2240,8 +2242,25 @@ static String fetchLatestVersion()
           tag = tag.substring(1);
         }
       }
+      if (tag.isEmpty())
+      {
+        upd_error = F("Unerwartete Antwort von GitHub");
+      }
+    }
+    else if (code == 404)
+    {
+      // private repo or missing release: anonymous devices cannot see it
+      upd_error = F("Kein Zugriff auf die Releases (Repo privat?) - bitte den Datei-Upload nutzen");
+    }
+    else
+    {
+      upd_error = String(F("Verbindung fehlgeschlagen (HTTP ")) + code + F(")");
     }
     http.end();
+  }
+  else
+  {
+    upd_error = F("Verbindungsaufbau fehlgeschlagen");
   }
   return tag;
 }
@@ -2252,11 +2271,15 @@ void checkGitUpdate()
   {
     requestVersionCheck = false;
     upd_state = 1;
+    upd_error = "";
     String tag = fetchLatestVersion();
     if (tag.isEmpty())
     {
       upd_state = 3;
-      upd_error = F("Version konnte nicht abgerufen werden");
+      if (upd_error.isEmpty())
+      {
+        upd_error = F("Version konnte nicht abgerufen werden");
+      }
     }
     else
     {
@@ -2291,6 +2314,7 @@ void checkGitUpdate()
 #else
     BearSSL::WiFiClientSecure client;
     client.setInsecure();
+    client.setBufferSizes(16384, 512); // small TX buffer halves the TLS RAM need
     ESPhttpUpdate.rebootOnUpdate(true);
     ESPhttpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
     t_httpUpdate_return ret = ESPhttpUpdate.update(client, url);
