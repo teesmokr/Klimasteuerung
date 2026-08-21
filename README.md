@@ -51,7 +51,7 @@ made with ❤ in Lingen
 1. **Flashen** (einmalig per USB): [esptool-js](https://espressif.github.io/esptool-js/) im Chrome/Edge-Browser öffnen, ESP verbinden und die passende Datei bei Flash-Adresse `0x0` flashen:
    - ESP32: `firmware.factory.bin` (aus `.pio/build/ESP32DEV/`)
    - Wemos D1 Mini / ESP-01: `firmware.bin` der jeweiligen Build-Umgebung
-2. **Verbinden**: Nach dem ersten Start öffnet das Gerät ein WLAN namens `HVAC-XXXXXXXXXXXX`. Damit verbinden — das Setup öffnet sich automatisch (sonst `http://192.168.4.1` aufrufen). Tipp: Am Handy vorher die mobilen Daten ausschalten, sonst versucht der Browser die Seite übers Mobilfunknetz zu laden.
+2. **Verbinden**: Nach dem ersten Start öffnet das Gerät ein WLAN namens `Klimaanlage-XXXXXXXXXXXX`. Damit verbinden — das Setup öffnet sich automatisch (sonst `http://192.168.4.1` aufrufen). Tipp: Am Handy vorher die mobilen Daten ausschalten, sonst versucht der Browser die Seite übers Mobilfunknetz zu laden.
 3. **Einrichten**: Gerätename (z. B. `schlafzimmer`), WLAN-Zugangsdaten und optional MQTT eintragen, speichern, neu starten. Danach ist das Gerät unter `http://<name>.local` bzw. seiner IP erreichbar.
 
    <img src="images/webui_init.png" width="320"/>

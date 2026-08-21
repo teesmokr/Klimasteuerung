@@ -59,7 +59,7 @@ COMMON = {
     "_APP_NAME_": "Mitsubishi2MQTT",
     "_UNIT_NAME_": "HVAC Wohnzimmer",
     "_VERSION_": "2025.07.1 (ESP32)",
-    "_KS_VERSION_": "1.7.0",
+    "_KS_VERSION_": "1.7.1",
 }
 
 def wrap(content, repl):
@@ -216,7 +216,7 @@ pages["init.html"] = wrap(tpl["html_init_setup"], {
     "_TXT_SAVE_": "Speichern & neu starten",
     "_TXT_FIRMWARE_UPGRADE_": "Firmware-Aktualisierung",
     "_FIRMWARE_UPLOAD_": "",
-    "_UNIT_NAME_": "HVAC-A1B2C3",
+    "_UNIT_NAME_": "Klimaanlage-A1B2C3",
 })
 
 pages["upgrade.html"] = wrap(tpl["html_page_upgrade"], {

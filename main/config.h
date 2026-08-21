@@ -167,7 +167,7 @@ unsigned long requestWifiScanTime = 0;
 unsigned lastWifiScanMillis;
 
 const PROGMEM char *m2mqtt_version = "2025.10.30";
-const PROGMEM char *ks_version = "1.7.0"; // Klimasteuerung release, must match the GitHub release tag (without the leading v)
+const PROGMEM char *ks_version = "1.7.1"; // Klimasteuerung release, must match the GitHub release tag (without the leading v)
 const PROGMEM char *ks_update_repo = "teesmokr/Klimasteuerung"; // GitHub repo used for the online update
 #ifndef KS_UPDATE_FILE
 #define KS_UPDATE_FILE "" // set per build env in platformio.ini; empty disables the online update
@@ -215,7 +215,7 @@ const PROGMEM uint8_t redLedPin = 0;
 const PROGMEM char *appName = "Mitsubishi2MQTT";
 const PROGMEM char *manufacturer = "MITSUBISHI ELECTRIC";
 const PROGMEM char *model = "HVAC MITSUBISHI";
-const PROGMEM char *hostnamePrefix = "HVAC-";
+const PROGMEM char *hostnamePrefix = "Klimaanlage-";
 static const char *const TAG = "mitsu_cn105";
 
 
