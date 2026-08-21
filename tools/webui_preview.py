@@ -59,7 +59,7 @@ COMMON = {
     "_APP_NAME_": "Mitsubishi2MQTT",
     "_UNIT_NAME_": "HVAC Wohnzimmer",
     "_VERSION_": "2025.07.1 (ESP32)",
-    "_KS_VERSION_": "1.7.1",
+    "_KS_VERSION_": "1.8.0",
 }
 
 def wrap(content, repl):

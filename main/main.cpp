@@ -173,6 +173,13 @@ bool saveFilter();
 void checkFilter();
 void handleApiFilter(AsyncWebServerRequest *request);
 
+// smart mode ("Automatik"): the web UI picks COOL/HEAT from the target-vs-room
+// difference whenever the target temperature changes; the flag only stores the
+// user's choice so every browser shows the same mode
+bool smart_mode = false;
+bool loadSmart();
+bool saveSmart();
+
 // holiday mode: pause schedules + automatic night mode, optional frost guard
 bool holiday_on = false;
 bool holiday_frost = true;
@@ -318,6 +325,7 @@ void setup()
   loadNight();
   loadFilter();
   loadHoliday();
+  loadSmart();
 #ifdef ESP32
   WiFi.setHostname(hostname.c_str());
 #else
@@ -1437,6 +1445,44 @@ bool saveHoliday()
   doc["fp"] = holiday_frost ? 1 : 0;
   doc["ft"] = holiday_frost_temp;
   File f = SPIFFS.open(holiday_conf, "w");
+  if (!f)
+  {
+    return false;
+  }
+  serializeJson(doc, f);
+  f.close();
+  return true;
+}
+
+bool loadSmart()
+{
+  if (!SPIFFS.exists(smart_conf))
+  {
+    return false;
+  }
+  File f = SPIFFS.open(smart_conf, "r");
+  if (!f)
+  {
+    return false;
+  }
+  const size_t capacity = JSON_OBJECT_SIZE(1) + 32;
+  DynamicJsonDocument doc(capacity);
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+  if (err)
+  {
+    return false;
+  }
+  smart_mode = (doc["on"] | 0) != 0;
+  return true;
+}
+
+bool saveSmart()
+{
+  const size_t capacity = JSON_OBJECT_SIZE(1) + 32;
+  DynamicJsonDocument doc(capacity);
+  doc["on"] = smart_mode ? 1 : 0;
+  File f = SPIFFS.open(smart_conf, "w");
   if (!f)
   {
     return false;
@@ -2655,7 +2701,7 @@ void handleApiStatus(AsyncWebServerRequest *request)
     return;
   heatpumpSettings s = hp.getSettings();
   String json;
-  json.reserve(360);
+  json.reserve(384);
   json += F("{\"name\":\"");
   json += hostname;
   json += F("\",\"connected\":");
@@ -2705,6 +2751,8 @@ void handleApiStatus(AsyncWebServerRequest *request)
   json += filter_minutes;
   json += F(",\"fth\":");
   json += filter_threshold_hours;
+  json += F(",\"sm\":");
+  json += smart_mode ? 1 : 0;
   json += F("}");
   request->send(200, "application/json", json);
 }
@@ -2713,9 +2761,27 @@ void handleApiControl(AsyncWebServerRequest *request)
 {
   if (!apiAuthOk(request))
     return;
+  // the SMART flag is panel state, not a heat pump setting - accept it even
+  // while the HVAC link is down
+  if (request->hasArg(F("SMART")))
+  {
+    bool on = request->arg(F("SMART")) == "1";
+    if (on != smart_mode)
+    {
+      smart_mode = on;
+      saveSmart();
+    }
+  }
   if (!hp.isConnected())
   {
-    request->send(503, "application/json", String(F("{\"err\":\"hvac\"}")));
+    if (request->hasArg(F("SMART")) && !request->hasArg(F("MODE")) && !request->hasArg(F("TEMP")) && !request->hasArg(F("POWER")) && !request->hasArg(F("PWRCHK")))
+    {
+      request->send(200, "application/json", String(F("{\"ok\":true}")));
+    }
+    else
+    {
+      request->send(503, "application/json", String(F("{\"err\":\"hvac\"}")));
+    }
     return;
   }
   heatpumpSettings settings = hp.getSettings();
@@ -3095,7 +3161,7 @@ void handleBackupPage(AsyncWebServerRequest *request)
 // every config file that goes into a backup bundle; console.log is runtime-only
 static const char *const backup_conf_files[] = {
     wifi_conf, mqtt_conf, unit_conf, others_conf, devices_conf,
-    schedules_conf, adhoc_conf, night_conf, filter_conf, holiday_conf};
+    schedules_conf, adhoc_conf, night_conf, filter_conf, holiday_conf, smart_conf};
 static const uint8_t backup_conf_count = sizeof(backup_conf_files) / sizeof(backup_conf_files[0]);
 
 // bundle keys are the bare file names so backups move between ESP32 ("/x.json")
@@ -3110,6 +3176,25 @@ static String backupKey(const char *path)
   return key;
 }
 
+#ifdef ESP8266
+// backup bundles are the biggest transient RAM users on the ESP8266; refuse
+// (and free the MQTT TLS buffers first) instead of risking an OOM crash
+// mid-request - the client shows a "retry in a moment" hint on this error
+static bool backupHeapOk(AsyncWebServerRequest *request, uint32_t need)
+{
+  if (ESP.getFreeHeap() >= need)
+  {
+    return true;
+  }
+  if (mqttClient != nullptr && mqttClient->connected())
+  {
+    mqttClient->disconnect(); // frees its buffers shortly; reconnects via timer
+  }
+  request->send(503, "application/json", String(F("{\"err\":\"lowmem\"}")));
+  return false;
+}
+#endif
+
 void handleApiBackup(AsyncWebServerRequest *request)
 {
   if (!apiAuthOk(request))
@@ -3122,6 +3207,10 @@ void handleApiBackup(AsyncWebServerRequest *request)
       request->send(400, "application/json", String(F("{\"err\":\"too_big\"}")));
       return;
     }
+#ifdef ESP8266
+    if (!backupHeapOk(request, data.length() * 2 + 8192))
+      return;
+#endif
     DynamicJsonDocument doc(data.length() * 2 + 1024);
     if (deserializeJson(doc, data) || !doc["files"].is<JsonObject>())
     {
@@ -3153,8 +3242,26 @@ void handleApiBackup(AsyncWebServerRequest *request)
     sendRebootRequest(3);
     return;
   }
+#ifdef ESP8266
+  if (!backupHeapOk(request, 20000))
+    return;
+#endif
+  // reserve the final size up front: the bundle is built and then copied into
+  // the response, so avoiding String reallocs keeps the heap unfragmented
+  size_t bundleSize = 128;
+  for (uint8_t i = 0; i < backup_conf_count; i++)
+  {
+    if (!SPIFFS.exists(backup_conf_files[i]))
+      continue;
+    File sf = SPIFFS.open(backup_conf_files[i], "r");
+    if (sf)
+    {
+      bundleSize += sf.size() + 24;
+      sf.close();
+    }
+  }
   String json;
-  json.reserve(2048);
+  json.reserve(bundleSize);
   json += F("{\"app\":\"mitsucon\",\"ver\":\"");
   json += ks_version;
   json += F("\",\"files\":{");
