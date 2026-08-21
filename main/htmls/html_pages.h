@@ -354,9 +354,6 @@ const char html_page_control_footer[] PROGMEM =
 			    "<form action='/timers' method='get'>"
                     "<button class='back'>&#128337; Zeitpl&#228;ne</button>"
                 "</form>"
-			    "<form action='/setup' method='get'>"
-                    "<button class='back'>&#9881; _TXT_SETUP_</button>"
-                "</form>"
             "</div>"
         "</div>";
 
