@@ -2232,9 +2232,25 @@ void sendWrappedHTML(AsyncWebServerRequest *request, const String &content)
   // large allocation is what a busy/fragmented ESP8266 heap fails to provide
   // (UI freezes / OOM on page switches, issue #6)
   static String chunkHead, chunkBody, chunkFoot;
-  chunkHead = response;
+  size_t lenH = response.length(), lenB = content.length(), lenF = footer.length();
+  // free the previous page first so the copy below gets the best chance,
+  // then take header/footer without copying (they are locals)
+  chunkHead = String();
+  chunkBody = String();
+  chunkFoot = String();
+  chunkHead = std::move(response);
+  chunkFoot = std::move(footer);
   chunkBody = content;
-  chunkFoot = footer;
+  if (chunkHead.length() != lenH || chunkBody.length() != lenB || chunkFoot.length() != lenF)
+  {
+    // a copy failed on a tight heap: never stream a truncated page (a page
+    // with header+footer but no body, issue #10) - ask for a retry instead
+    chunkHead = String();
+    chunkBody = String();
+    chunkFoot = String();
+    request->send(503, "text/plain", String(F("Zu wenig freier Speicher - bitte die Seite erneut laden")));
+    return;
+  }
   AsyncWebServerResponse *res = request->beginChunkedResponse(F("text/html"),
       [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
         size_t e1 = chunkHead.length();
