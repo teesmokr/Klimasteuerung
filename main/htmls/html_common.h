@@ -14,6 +14,9 @@
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
+// compiled out when the gzip blob (static_gz.h) is present - the source stays
+// here for tools/webui_preview.py and tools/gen_static_gz.py
+#ifndef KS_GZ_ASSETS
 const char html_css[] PROGMEM =
         ":root {"
             "--bg: #f2f5fa;"
@@ -944,6 +947,7 @@ const char html_css[] PROGMEM =
             "font-size: .8rem;"
         "}"
 ;
+#endif // KS_GZ_ASSETS
 
 const char html_common_header[] PROGMEM =
 "<!DOCTYPE html>"

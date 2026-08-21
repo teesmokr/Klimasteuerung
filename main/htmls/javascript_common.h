@@ -154,6 +154,9 @@ const char control_script_events[] PROGMEM =
     "</script>"
     "<script src='/control.js?v=_KS_VERSION_'></script>";
 
+// compiled out when the gzip blob (static_gz.h) is present - the source stays
+// here for tools/webui_preview.py and tools/gen_static_gz.py
+#ifndef KS_GZ_ASSETS
 const char control_js[] PROGMEM =
         "var A0 = 135, SWEEP = 270, R = 120, CX = 150, CY = 150;"
         "var st = {min: MIN, max: MAX, step: STEP};"
@@ -676,10 +679,12 @@ const char control_js[] PROGMEM =
             "}"
         "}"
 ;
+#endif // KS_GZ_ASSETS
 
 const char timers_script[] PROGMEM =
     "<script src='/timers.js?v=_KS_VERSION_'></script>";
 
+#ifndef KS_GZ_ASSETS
 const char timers_js[] PROGMEM =
         "var devices = [];"
         "var scheds = [];"
@@ -1050,10 +1055,12 @@ const char timers_js[] PROGMEM =
                 ".catch(function() { renderList(); });"
         "}"
 ;
+#endif // KS_GZ_ASSETS
 
 const char devices_script[] PROGMEM =
     "<script src='/devices.js?v=_KS_VERSION_'></script>";
 
+#ifndef KS_GZ_ASSETS
 const char devices_js[] PROGMEM =
         "var devices = [];"
         "var dmode = 'single';"
@@ -1155,6 +1162,7 @@ const char devices_js[] PROGMEM =
                 ".catch(function() { renderList(); renderMode(); });"
         "}"
 ;
+#endif // KS_GZ_ASSETS
 
 /* backup page: small enough to stay inline (no extra flash asset) */
 const char backup_script[] PROGMEM =
