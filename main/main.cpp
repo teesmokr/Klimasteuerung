@@ -2196,7 +2196,13 @@ boolean initWifi()
 void sendWrappedHTML(AsyncWebServerRequest *request, const String &content)
 {
   if (content.isEmpty())
+  {
+    // the page build ran out of RAM (a failed String allocation leaves the
+    // content empty) - answer with a clear retry hint instead of letting the
+    // server report "Handler did not handle the request" (issue #9)
+    request->send(503, "text/plain", String(F("Zu wenig freier Speicher - bitte die Seite erneut laden")));
     return;
+  }
 
   String footer = FPSTR(html_common_footer);
   footer.replace(F("_KS_VERSION_"), ks_version);
@@ -2235,7 +2241,16 @@ void sendWrappedHTML(AsyncWebServerRequest *request, const String &content)
         size_t e2 = e1 + chunkBody.length();
         size_t total = e2 + chunkFoot.length();
         if (index >= total)
+        {
+          // done streaming: release the buffers right away instead of
+          // parking the whole page (~18KB) in RAM until the next page load -
+          // that parked copy was what pushed the heap under the size of the
+          // next page build (issue #9)
+          chunkHead = String();
+          chunkBody = String();
+          chunkFoot = String();
           return 0;
+        }
         size_t n = 0;
         while (n < maxLen && index + n < total)
         {
