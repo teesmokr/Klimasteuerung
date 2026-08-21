@@ -2178,7 +2178,19 @@ boolean initWifi()
   // Configure the AP subnet BEFORE starting the AP: on arduino-esp32 core 3.x
   // configuring only after softAP() leaves the DHCP server on the old pool and
   // clients never get a lease (association drops right after connecting).
+  // Crucial for the captive portal prompt (issue #12): DHCP must ADVERTISE us
+  // as the DNS server - without that option phones fall back to public DNS
+  // (8.8.8.8), which dead-ends in the AP subnet, and Android only reports
+  // "no internet" instead of showing the sign-in notification. (Upstream got
+  // away without it because its AP literally sat on 8.8.8.8.)
+#ifdef ESP32
+  WiFi.softAPConfig(apIP, apIP, netMsk, (uint32_t)0, apIP);
+#else
   WiFi.softAPConfig(apIP, apIP, netMsk);
+  ip4_addr_t apDns;
+  apDns.addr = (uint32_t)apIP;
+  WiFi.softAPDhcpServer().setDns(apDns);
+#endif
   if (!connectWifiSuccess)
   {
     // Set AP password when falling back to AP on fail

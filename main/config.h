@@ -167,7 +167,7 @@ unsigned long requestWifiScanTime = 0;
 unsigned lastWifiScanMillis;
 
 const PROGMEM char *m2mqtt_version = "2025.10.30";
-const PROGMEM char *ks_version = "1.11.2"; // Klimasteuerung release, must match the GitHub release tag (without the leading v)
+const PROGMEM char *ks_version = "1.11.3"; // Klimasteuerung release, must match the GitHub release tag (without the leading v)
 const PROGMEM char *ks_update_repo = "teesmokr/Klimasteuerung"; // GitHub repo used for the online update
 #ifndef KS_UPDATE_FILE
 #define KS_UPDATE_FILE "" // set per build env in platformio.ini; empty disables the online update
