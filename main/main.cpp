@@ -2944,7 +2944,15 @@ static String fetchLatestVersion()
 #else
   BearSSL::WiFiClientSecure client;
   client.setInsecure();
-  client.setBufferSizes(16384, 512); // small TX buffer halves the TLS RAM need
+  // MFLN shrinks the RX buffer from 16KB to 4KB - the largest single
+  // allocation of the whole check; fall back to the full buffer when
+  // github's CDN rejects the negotiation
+  uint16_t rxSize = 16384;
+  if (BearSSL::WiFiClientSecure::probeMaxFragmentLength("github.com", 443, 4096))
+  {
+    rxSize = 4096;
+  }
+  client.setBufferSizes(rxSize, 512); // small TX buffer halves the TLS RAM need
 #endif
   HTTPClient http;
   http.setTimeout(8000);
@@ -2982,6 +2990,10 @@ static String fetchLatestVersion()
     else
     {
       upd_error = String(F("Verbindung fehlgeschlagen (HTTP ")) + code + F(")");
+      if (code < 0)
+      {
+        upd_error += F(" - vermutlich zu wenig freier Speicher; bitte erneut versuchen oder das Update per Datei-Upload einspielen");
+      }
     }
     http.end();
   }
@@ -3000,15 +3012,26 @@ void checkGitUpdate()
     upd_state = 1;
     upd_error = "";
 #ifdef ESP8266
-    // TLS to GitHub needs ~18KB; free MQTT first when the heap is tight
-    // (it reconnects automatically via the reconnect timer)
-    if (ESP.getFreeHeap() < 26000 && mqttClient != nullptr && mqttClient->connected())
+    // TLS to GitHub is the biggest RAM user on the ESP8266 - free the MQTT
+    // buffers up front, unconditionally (a heap-total threshold missed
+    // fragmented heaps in the field); MQTT reconnects via its timer
+    if (mqttClient != nullptr && mqttClient->connected())
     {
       mqttClient->disconnect();
       delay(100);
     }
 #endif
     String tag = fetchLatestVersion();
+#ifdef ESP8266
+    if (tag.isEmpty() && upd_error.startsWith(F("Verbindung fehlgeschlagen")))
+    {
+      // lwip releases the buffers of freshly closed connections with a lag;
+      // one quiet retry rescues most low-memory first attempts
+      delay(2000);
+      upd_error = "";
+      tag = fetchLatestVersion();
+    }
+#endif
     if (tag.isEmpty())
     {
       upd_state = 3;
@@ -3050,6 +3073,8 @@ void checkGitUpdate()
 #else
     BearSSL::WiFiClientSecure client;
     client.setInsecure();
+    // no MFLN here: the download gets redirected to a different asset host
+    // that may not accept the negotiated small buffer
     client.setBufferSizes(16384, 512); // small TX buffer halves the TLS RAM need
     ESPhttpUpdate.rebootOnUpdate(true);
     ESPhttpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
