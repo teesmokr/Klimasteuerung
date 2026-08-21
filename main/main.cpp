@@ -61,6 +61,8 @@ void handleApiDevices(AsyncWebServerRequest *request);
 void handleApiSchedules(AsyncWebServerRequest *request);
 void handleTimers(AsyncWebServerRequest *request);
 void handleDevicesPage(AsyncWebServerRequest *request);
+void handleBackupPage(AsyncWebServerRequest *request);
+void handleApiBackup(AsyncWebServerRequest *request);
 void handleCss(AsyncWebServerRequest *request);
 void handleControlJs(AsyncWebServerRequest *request);
 void handleTimersJs(AsyncWebServerRequest *request);
@@ -387,10 +389,12 @@ void setup()
         server.on("/api/history", handleApiHistory);
         server.on("/api/filter", handleApiFilter);
         server.on("/api/holiday", handleApiHoliday);
+        server.on("/api/backup", handleApiBackup);
         server.on("/", handleRoot);
         server.on("/control", handleControl);
         server.on("/timers", handleTimers);
         server.on("/devices", handleDevicesPage);
+        server.on("/backup", handleBackupPage);
         server.on("/setup", handleSetup);
         server.on("/mqtt", handleMqtt);
         server.on("/wifi", handleWifi);
@@ -803,10 +807,11 @@ bool loadOthers()
 }
 
 // devices_json is either a legacy array [{"n":..,"a":..}] or an object
-// {"r":"master"|"slave","d":[{"n":..,"a":..}]} carrying the panel role
+// {"m":"single"|"multi","d":[{"n":..,"a":..}]} carrying the panel mode
+// (older builds stored "r":"master"|"slave" instead of "m")
 static int8_t parseDeviceList(const String& json)
 {
-  const size_t capacity = JSON_OBJECT_SIZE(2) + JSON_ARRAY_SIZE(12) + 12 * JSON_OBJECT_SIZE(2) + 1024;
+  const size_t capacity = JSON_OBJECT_SIZE(3) + JSON_ARRAY_SIZE(12) + 12 * JSON_OBJECT_SIZE(2) + 1024;
   DynamicJsonDocument doc(capacity);
   if (deserializeJson(doc, json))
   {
@@ -3073,6 +3078,120 @@ void handleDevicesPage(AsyncWebServerRequest *request)
   devicesPage += FPSTR(html_page_devices);
   devicesPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
   sendWrappedHTML(request, devicesPage);
+}
+
+void handleBackupPage(AsyncWebServerRequest *request)
+{
+  if (!checkLogin(request))
+  {
+    return;
+  }
+  String backupPage = FPSTR(backup_script);
+  backupPage += FPSTR(html_page_backup);
+  backupPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
+  sendWrappedHTML(request, backupPage);
+}
+
+// every config file that goes into a backup bundle; console.log is runtime-only
+static const char *const backup_conf_files[] = {
+    wifi_conf, mqtt_conf, unit_conf, others_conf, devices_conf,
+    schedules_conf, adhoc_conf, night_conf, filter_conf, holiday_conf};
+static const uint8_t backup_conf_count = sizeof(backup_conf_files) / sizeof(backup_conf_files[0]);
+
+// bundle keys are the bare file names so backups move between ESP32 ("/x.json")
+// and ESP8266 ("x.json") builds
+static String backupKey(const char *path)
+{
+  String key = path;
+  if (key.startsWith(F("/")))
+  {
+    key.remove(0, 1);
+  }
+  return key;
+}
+
+void handleApiBackup(AsyncWebServerRequest *request)
+{
+  if (!apiAuthOk(request))
+    return;
+  if (request->hasArg(F("data")))
+  {
+    const String &data = request->arg(F("data"));
+    if (data.length() > 10240)
+    {
+      request->send(400, "application/json", String(F("{\"err\":\"too_big\"}")));
+      return;
+    }
+    DynamicJsonDocument doc(data.length() * 2 + 1024);
+    if (deserializeJson(doc, data) || !doc["files"].is<JsonObject>())
+    {
+      request->send(400, "application/json", String(F("{\"err\":\"invalid\"}")));
+      return;
+    }
+    JsonObject files = doc["files"].as<JsonObject>();
+    uint8_t written = 0;
+    for (uint8_t i = 0; i < backup_conf_count; i++)
+    {
+      JsonVariant entry = files[backupKey(backup_conf_files[i])];
+      if (!entry.is<JsonObject>() && !entry.is<JsonArray>())
+        continue;
+      String content;
+      serializeJson(entry, content);
+      File configFile = SPIFFS.open(backup_conf_files[i], "w");
+      if (!configFile)
+        continue;
+      configFile.print(content);
+      configFile.close();
+      written++;
+    }
+    if (written == 0)
+    {
+      request->send(400, "application/json", String(F("{\"err\":\"empty\"}")));
+      return;
+    }
+    request->send(200, "application/json", String(F("{\"ok\":true}")));
+    sendRebootRequest(3);
+    return;
+  }
+  String json;
+  json.reserve(2048);
+  json += F("{\"app\":\"mitsucon\",\"ver\":\"");
+  json += ks_version;
+  json += F("\",\"files\":{");
+  bool first = true;
+  for (uint8_t i = 0; i < backup_conf_count; i++)
+  {
+    if (!SPIFFS.exists(backup_conf_files[i]))
+      continue;
+    File configFile = SPIFFS.open(backup_conf_files[i], "r");
+    if (!configFile)
+      continue;
+    if (configFile.size() > 4096)
+    {
+      configFile.close();
+      continue;
+    }
+    String content = configFile.readString();
+    configFile.close();
+    // only embed valid JSON so the bundle itself stays parseable
+    DynamicJsonDocument check(content.length() * 2 + 512);
+    if (deserializeJson(check, content))
+      continue;
+    if (!first)
+      json += ',';
+    first = false;
+    json += '"';
+    json += backupKey(backup_conf_files[i]);
+    json += F("\":");
+    json += content;
+  }
+  json += F("}}");
+  AsyncWebServerResponse *response = request->beginResponse(200, F("application/json"), json);
+  String fileName = F("attachment; filename=\"mitsucon-backup-");
+  fileName += hostname;
+  fileName += F(".json\"");
+  response->addHeader(F("Content-Disposition"), fileName);
+  request->send(response);
 }
 
 // stylesheet and page scripts are served straight from flash: keeps the

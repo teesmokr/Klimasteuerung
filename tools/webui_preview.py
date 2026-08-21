@@ -59,7 +59,7 @@ COMMON = {
     "_APP_NAME_": "Mitsubishi2MQTT",
     "_UNIT_NAME_": "HVAC Wohnzimmer",
     "_VERSION_": "2025.07.1 (ESP32)",
-    "_KS_VERSION_": "1.6.0",
+    "_KS_VERSION_": "1.7.0",
 }
 
 def wrap(content, repl):
@@ -180,6 +180,10 @@ pages["timers.html"] = wrap(tpl["timers_script"] + tpl["html_page_timers"], {
 })
 
 pages["devices.html"] = wrap(tpl["devices_script"] + tpl["html_page_devices"], {
+    "_TXT_BACK_": "Zurück",
+})
+
+pages["backup.html"] = wrap(tpl["backup_script"] + tpl["html_page_backup"], {
     "_TXT_BACK_": "Zurück",
 })
 

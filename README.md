@@ -27,6 +27,8 @@ made with ❤ in Lingen
 - **Ad-hoc-Modus**: Ein Knopf startet die Anlage sofort im gewählten Modus (Kühlen/Heizen/…) und schaltet sie nach einer konfigurierbaren Laufzeit automatisch wieder aus (*Einstellungen → Zeitpläne → Ad-hoc*)
 - **Nachtmodus**: 🌙-Knopf oder automatisches tägliches Zeitfenster (auch über Mitternacht) wendet ein Profil an — Temperatur, Modus, Lüfter, Lamellen frei kombinierbar, „unverändert" pro Feld möglich. Beim Beenden werden die vorherigen Einstellungen wiederhergestellt (*Einstellungen → Zeitpläne → Nachtmodus*)
 - **Mehrere Geräte, eine Oberfläche**: Unter *Einstellungen → Geräte* alle Einheiten eintragen und mit einem Klick **an alle Geräte verteilen** — danach kann *jedes* Webinterface *jede* Klimaanlage steuern (Tabs oben, das eigene Gerät blendet sich automatisch aus). Der Browser spricht die anderen ESPs direkt über deren JSON-API an
+- **Betriebsart Einzelgerät / Mehrere Geräte**: Umschalter unter *Einstellungen → Geräte* — im Einzelgerät-Modus verschwinden Tab-Leiste, Geräteauswahl und Synchronisier-Knöpfe, die Oberfläche steuert nur die eigene Anlage (die Geräteliste bleibt gespeichert)
+- **Sicherung & Wiederherstellung**: Unter *Einstellungen → Sicherung* alle Einstellungen (WLAN, MQTT, Einheit, Geräteliste, Zeitpläne, Nacht-/Filter-/Urlaubsmodus) als JSON-Datei herunterladen und auf demselben oder einem anderen Gerät wieder einspielen — praktisch beim Gerätetausch oder für die Einrichtung mehrerer Einheiten
 - **Zeitpläne** (bis zu 8 Regeln, laufen auf dem Gerät selbst — kein Browser nötig):
   - Wochentage (Mo–So) **oder** „alle N Tage" mit Startdatum (z. B. *jeden 2. Tag von 8–10 Uhr Schlafzimmer auf 21° kühlen*)
   - Zeitfenster von/bis, Modus, Zieltemperatur, optional „nach Ablauf ausschalten"
@@ -39,7 +41,7 @@ made with ❤ in Lingen
 - **Urlaubsmodus**: pausiert Zeitpläne und Nacht-Automatik (auf Wunsch auf allen Geräten), optional mit Frostschutz-Wächter
 - **Zeitpläne übertragen**: fertige Regel-Sätze per Klick auf ein anderes Gerät kopieren
 - **Online-Update per Klick**: Die Firmware prüft auf Wunsch das neueste GitHub-Release und installiert es direkt übers Internet (*Einstellungen → Firmware-Aktualisierung*); die installierte Version steht im Fußbereich jeder Seite
-- **JSON-API**: `GET /api/status`, `POST /api/control`, `GET|POST /api/devices`, `GET|POST /api/schedules`, `POST /api/adhoc`, `GET|POST /api/night`, `GET /api/history`, `GET|POST /api/filter`, `GET|POST /api/holiday`, `GET|POST /api/update` (CORS-freigegeben)
+- **JSON-API**: `GET /api/status`, `POST /api/control`, `GET|POST /api/devices`, `GET|POST /api/schedules`, `POST /api/adhoc`, `GET|POST /api/night`, `GET /api/history`, `GET|POST /api/filter`, `GET|POST /api/holiday`, `GET|POST /api/backup`, `GET|POST /api/update` (CORS-freigegeben)
 - Alles Weitere vom Original: Home-Assistant-Autodiscovery, MQTT-Steuerung, OTA-Firmware-Update, Erstkonfiguration per WLAN-Access-Point, Login-Schutz, mehrsprachige Systemseiten
 
 ***
