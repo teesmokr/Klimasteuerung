@@ -180,6 +180,22 @@ bool smart_mode = false;
 bool loadSmart();
 bool saveSmart();
 
+// self-clean ("CLEAN", issue #8): dry the indoor unit after a cooling run by
+// fanning at the lowest speed for clean_minutes, then power off for real.
+// Auto-trigger watches the ON->OFF transition of the cached settings, so it
+// catches every off-path (UI, MQTT, schedules, ad-hoc end, IR remote).
+bool clean_auto = false;
+uint16_t clean_minutes = 15;          // 5..60
+unsigned long cleanEndMillis = 0;     // 0 = inactive (RAM only, reboot cancels)
+char clean_prev_power[8] = "";
+char clean_prev_mode[9] = "";
+unsigned long lastCleanCheck = 0;
+bool loadClean();
+bool saveClean();
+void checkClean();
+static uint16_t cleanLeftMinutes();
+void handleApiClean(AsyncWebServerRequest *request);
+
 // holiday mode: pause schedules + automatic night mode, optional frost guard
 bool holiday_on = false;
 bool holiday_frost = true;
@@ -326,6 +342,7 @@ void setup()
   loadFilter();
   loadHoliday();
   loadSmart();
+  loadClean();
 #ifdef ESP32
   WiFi.setHostname(hostname.c_str());
 #else
@@ -397,6 +414,7 @@ void setup()
         server.on("/api/history", handleApiHistory);
         server.on("/api/filter", handleApiFilter);
         server.on("/api/holiday", handleApiHoliday);
+        server.on("/api/clean", handleApiClean);
         server.on("/api/backup", handleApiBackup);
         server.on("/", handleRoot);
         server.on("/control", handleControl);
@@ -1490,6 +1508,101 @@ bool saveSmart()
   serializeJson(doc, f);
   f.close();
   return true;
+}
+
+bool loadClean()
+{
+  if (!SPIFFS.exists(clean_conf))
+  {
+    return false;
+  }
+  File f = SPIFFS.open(clean_conf, "r");
+  if (!f)
+  {
+    return false;
+  }
+  const size_t capacity = JSON_OBJECT_SIZE(2) + 48;
+  DynamicJsonDocument doc(capacity);
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+  if (err)
+  {
+    return false;
+  }
+  clean_auto = (doc["en"] | 0) != 0;
+  uint16_t m = doc["m"] | 15;
+  if (m >= 5 && m <= 60)
+  {
+    clean_minutes = m;
+  }
+  return true;
+}
+
+bool saveClean()
+{
+  const size_t capacity = JSON_OBJECT_SIZE(2) + 48;
+  DynamicJsonDocument doc(capacity);
+  doc["en"] = clean_auto ? 1 : 0;
+  doc["m"] = clean_minutes;
+  File f = SPIFFS.open(clean_conf, "w");
+  if (!f)
+  {
+    return false;
+  }
+  serializeJson(doc, f);
+  f.close();
+  return true;
+}
+
+static void cleanStart()
+{
+  if (!hp.isConnected())
+    return;
+  heatpumpSettings s = hp.getSettings();
+  s.power = "ON";
+  s.mode = "FAN";
+  s.fan = supportQuietMode ? "QUIET" : "1";
+  hp.setSettings(s);
+  requestHpUpdate = true;
+  requestHpUpdateTime = millis() + 10;
+  cleanEndMillis = millis() + (unsigned long)clean_minutes * 60000UL;
+  if (cleanEndMillis == 0)
+    cleanEndMillis = 1; // avoid the 'inactive' sentinel on wrap
+}
+
+void checkClean()
+{
+  if (lastCleanCheck != 0 && millis() - lastCleanCheck < 2000UL)
+    return;
+  lastCleanCheck = millis();
+  if (!hp.isConnected())
+    return;
+  heatpumpSettings s = hp.getSettings();
+  const char *pw = s.power != NULL ? s.power : "";
+  const char *md = s.mode != NULL ? s.mode : "";
+  bool wasOn = strcmp(clean_prev_power, "ON") == 0;
+  bool isOff = strcmp(pw, "OFF") == 0;
+  if (cleanEndMillis != 0 && (long)(millis() - cleanEndMillis) >= 0)
+  {
+    // drying finished: now the unit goes off for real; the FAN mode of this
+    // transition keeps the auto-trigger below from re-arming
+    ESP_LOGI(TAG, "Clean run finished, power off");
+    cleanEndMillis = 0;
+    adhocPower(false);
+  }
+  else if (cleanEndMillis != 0 && isOff && wasOn)
+  {
+    // switched off while drying: respect it and stay off
+    cleanEndMillis = 0;
+  }
+  else if (cleanEndMillis == 0 && clean_auto && isOff && wasOn &&
+           (strcmp(clean_prev_mode, "COOL") == 0 || strcmp(clean_prev_mode, "DRY") == 0 || strcmp(clean_prev_mode, "AUTO") == 0))
+  {
+    ESP_LOGI(TAG, "Power off after cooling, starting clean run (%u min)", clean_minutes);
+    cleanStart();
+  }
+  strlcpy(clean_prev_power, pw, sizeof(clean_prev_power));
+  strlcpy(clean_prev_mode, md, sizeof(clean_prev_mode));
 }
 
 void checkHoliday()
@@ -2788,6 +2901,10 @@ void handleApiStatus(AsyncWebServerRequest *request)
   json += filter_threshold_hours;
   json += F(",\"sm\":");
   json += smart_mode ? 1 : 0;
+  json += F(",\"cl\":");
+  json += cleanLeftMinutes();
+  json += F(",\"clm\":");
+  json += clean_minutes;
   json += F("}");
   request->send(200, "application/json", json);
 }
@@ -2967,6 +3084,57 @@ void handleApiAdhoc(AsyncWebServerRequest *request)
       left = (uint16_t)((remain + 59999L) / 60000L);
   }
   request->send(200, "application/json", String(F("{\"m\":")) + adhoc_minutes + F(",\"left\":") + left + F("}"));
+}
+
+static uint16_t cleanLeftMinutes()
+{
+  if (cleanEndMillis == 0)
+    return 0;
+  long remain = (long)(cleanEndMillis - millis());
+  if (remain <= 0)
+    return 0;
+  return (uint16_t)((remain + 59999L) / 60000L);
+}
+
+void handleApiClean(AsyncWebServerRequest *request)
+{
+  if (!apiAuthOk(request))
+    return;
+  if (request->hasArg(F("cfg")))
+  {
+    clean_auto = request->arg(F("en")) == "1";
+    uint16_t m = (uint16_t)request->arg(F("m")).toInt();
+    if (m >= 5 && m <= 60)
+    {
+      clean_minutes = m;
+    }
+    saveClean();
+    request->send(200, "application/json", String(F("{\"ok\":true}")));
+    return;
+  }
+  if (request->hasArg(F("stop")))
+  {
+    if (cleanEndMillis != 0)
+    {
+      cleanEndMillis = 0;
+      adhocPower(false);
+    }
+    request->send(200, "application/json", String(F("{\"ok\":true,\"left\":0}")));
+    return;
+  }
+  if (request->hasArg(F("start")))
+  {
+    if (!hp.isConnected())
+    {
+      request->send(503, "application/json", String(F("{\"err\":\"hvac\"}")));
+      return;
+    }
+    cleanStart();
+    request->send(200, "application/json", String(F("{\"ok\":true,\"left\":")) + clean_minutes + F("}"));
+    return;
+  }
+  String json = String(F("{\"en\":")) + (clean_auto ? 1 : 0) + F(",\"m\":") + clean_minutes + F(",\"left\":") + cleanLeftMinutes() + F("}");
+  request->send(200, "application/json", json);
 }
 
 // resolve the latest release tag without the GitHub API: /releases/latest
@@ -3229,7 +3397,7 @@ void handleBackupPage(AsyncWebServerRequest *request)
 // every config file that goes into a backup bundle; console.log is runtime-only
 static const char *const backup_conf_files[] = {
     wifi_conf, mqtt_conf, unit_conf, others_conf, devices_conf,
-    schedules_conf, adhoc_conf, night_conf, filter_conf, holiday_conf, smart_conf};
+    schedules_conf, adhoc_conf, night_conf, filter_conf, holiday_conf, smart_conf, clean_conf};
 static const uint8_t backup_conf_count = sizeof(backup_conf_files) / sizeof(backup_conf_files[0]);
 
 // bundle keys are the bare file names so backups move between ESP32 ("/x.json")
@@ -5172,6 +5340,7 @@ void loop()
     checkWifiScanRequest();
     checkSchedules();
     checkAdhoc();
+    checkClean();
     checkNight();
     checkHistory();
     checkFilter();

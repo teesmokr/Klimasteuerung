@@ -39,10 +39,11 @@ made with ❤ in Lingen
 - **Alle aus**: Ein Knopf auf der Steuerung schaltet alle verknüpften Geräte auf einmal ab
 - **Temperatur-Verlauf**: 24-Stunden-Kurve der Raumtemperatur direkt auf der Steuerung (auch für die anderen Geräte per Tab)
 - **Filter-Erinnerung**: Betriebsstundenzähler pro Gerät; nach einstellbarer Laufzeit erinnert die Steuerung ans Filterreinigen (*Einstellungen → Zeitpläne → Filter*)
+- **Selbstreinigung (CLEAN)**: Trocknet das Innengerät nach Kühl-/Entfeuchtungsbetrieb, um Schimmel und Gerüche zu verhindern — nach dem Ausschalten läuft der Lüfter für eine einstellbare Dauer (Standard 15 min) auf kleinster Stufe weiter und schaltet dann wirklich ab; erkennt jeden Aus-Weg (Web, MQTT, Zeitplan, IR-Fernbedienung). Der 🧼-Button auf der Steuerung startet die Reinigung auch manuell (*Konfiguration: Einstellungen → Zeitpläne → Selbstreinigung*)
 - **Urlaubsmodus**: pausiert Zeitpläne und Nacht-Automatik (auf Wunsch auf allen Geräten), optional mit Frostschutz-Wächter
 - **Zeitpläne übertragen**: fertige Regel-Sätze per Klick auf ein anderes Gerät kopieren
 - **Online-Update per Klick**: Der Browser prüft das neueste GitHub-Release, lädt es herunter und spielt es direkt aufs Gerät ein (*Einstellungen → Firmware-Aktualisierung*) — das Gerät selbst braucht dafür weder Internetzugang noch TLS-RAM; als Fallback bleibt der geräteseitige Weg erhalten. Die installierte Version steht im Fußbereich jeder Seite
-- **JSON-API**: `GET /api/status`, `POST /api/control`, `GET|POST /api/devices`, `GET|POST /api/schedules`, `POST /api/adhoc`, `GET|POST /api/night`, `GET /api/history`, `GET|POST /api/filter`, `GET|POST /api/holiday`, `GET|POST /api/backup`, `GET|POST /api/update` (CORS-freigegeben)
+- **JSON-API**: `GET /api/status`, `POST /api/control`, `GET|POST /api/devices`, `GET|POST /api/schedules`, `POST /api/adhoc`, `GET|POST /api/night`, `GET /api/history`, `GET|POST /api/filter`, `GET|POST /api/holiday`, `GET|POST /api/clean`, `GET|POST /api/backup`, `GET|POST /api/update` (CORS-freigegeben)
 - Alles Weitere vom Original: Home-Assistant-Autodiscovery, MQTT-Steuerung, OTA-Firmware-Update, Erstkonfiguration per WLAN-Access-Point, Login-Schutz, mehrsprachige Systemseiten
 
 ***

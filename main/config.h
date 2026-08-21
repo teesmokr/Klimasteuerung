@@ -167,7 +167,7 @@ unsigned long requestWifiScanTime = 0;
 unsigned lastWifiScanMillis;
 
 const PROGMEM char *m2mqtt_version = "2025.10.30";
-const PROGMEM char *ks_version = "1.9.2"; // Klimasteuerung release, must match the GitHub release tag (without the leading v)
+const PROGMEM char *ks_version = "1.10.0"; // Klimasteuerung release, must match the GitHub release tag (without the leading v)
 const PROGMEM char *ks_update_repo = "teesmokr/Klimasteuerung"; // GitHub repo used for the online update
 #ifndef KS_UPDATE_FILE
 #define KS_UPDATE_FILE "" // set per build env in platformio.ini; empty disables the online update
@@ -189,6 +189,7 @@ const PROGMEM char *night_conf = "/night.json";
 const PROGMEM char *filter_conf = "/filter.json";
 const PROGMEM char *holiday_conf = "/holiday.json";
 const PROGMEM char *smart_conf = "/smart.json";
+const PROGMEM char *clean_conf = "/clean.json";
 // pinouts
 const PROGMEM uint8_t blueLedPin = 2; // The ESP32 has an internal blue LED at D2 (GPIO 02)
 // keep LED off (check board schematic)
@@ -206,6 +207,7 @@ const PROGMEM char *night_conf = "night.json";
 const PROGMEM char *filter_conf = "filter.json";
 const PROGMEM char *holiday_conf = "holiday.json";
 const PROGMEM char *smart_conf = "smart.json";
+const PROGMEM char *clean_conf = "clean.json";
 // pinouts
 const PROGMEM uint8_t blueLedPin = LED_BUILTIN; // Onboard LED = digital pin 2 "D4" (blue LED on WEMOS D1-Mini)
 // keep LED off (For Wemos D1-Mini), Other board check the schematic
