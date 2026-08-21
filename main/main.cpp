@@ -492,6 +492,11 @@ void setup()
   }
   else
   {
+    // answer non-A queries (modern phones probe AAAA/IPv6 first) with NoError
+    // instead of the default SERVFAIL - otherwise Android gives up before the
+    // HTTP probe and never shows the "sign in to network" prompt (issue #12)
+    dnsServer.setTTL(0);
+    dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
     dnsServer.start(DNS_PORT, "*", apIP);
     initCaptivePortal();
   }
@@ -1960,6 +1965,8 @@ void initCaptivePortal()
   // A Tier (commonly used by modern systems)
   server.on("/generate_204", [](AsyncWebServerRequest *request)
             { request->redirect(localApIpUrl); }); // android captive portal redirect
+  server.on("/gen_204", [](AsyncWebServerRequest *request)
+            { request->redirect(localApIpUrl); }); // android fallback probe path
   server.on("/redirect", [](AsyncWebServerRequest *request)
             { request->redirect(localApIpUrl); }); // microsoft redirect
   server.on("/hotspot-detect.html", [](AsyncWebServerRequest *request)
