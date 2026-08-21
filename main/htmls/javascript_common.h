@@ -152,7 +152,7 @@ const char control_script_events[] PROGMEM =
         "var HEATSUP = _HEAT_MODE_SUPPORT_;"
         "var QUIETSUP = _QUIET_MODE_SUPPORT_;"
     "</script>"
-    "<script src='/control.js'></script>";
+    "<script src='/control.js?v=_KS_VERSION_'></script>";
 
 const char control_js[] PROGMEM =
         "var A0 = 135, SWEEP = 270, R = 120, CX = 150, CY = 150;"
@@ -647,7 +647,7 @@ const char control_js[] PROGMEM =
 ;
 
 const char timers_script[] PROGMEM =
-    "<script src='/timers.js'></script>";
+    "<script src='/timers.js?v=_KS_VERSION_'></script>";
 
 const char timers_js[] PROGMEM =
         "var devices = [];"
@@ -988,7 +988,7 @@ const char timers_js[] PROGMEM =
 ;
 
 const char devices_script[] PROGMEM =
-    "<script src='/devices.js'></script>";
+    "<script src='/devices.js?v=_KS_VERSION_'></script>";
 
 const char devices_js[] PROGMEM =
         "var devices = [];"

@@ -2,6 +2,9 @@
 .vscode
 .pio*
 *.bin
+# release binaries are tracked: the browser-side updater fetches them from
+# raw.githubusercontent.com (CORS-enabled, unlike release assets)
+!firmware/*.bin
 build/
 
 tools/preview/

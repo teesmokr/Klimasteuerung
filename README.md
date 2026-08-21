@@ -41,7 +41,7 @@ made with ❤ in Lingen
 - **Filter-Erinnerung**: Betriebsstundenzähler pro Gerät; nach einstellbarer Laufzeit erinnert die Steuerung ans Filterreinigen (*Einstellungen → Zeitpläne → Filter*)
 - **Urlaubsmodus**: pausiert Zeitpläne und Nacht-Automatik (auf Wunsch auf allen Geräten), optional mit Frostschutz-Wächter
 - **Zeitpläne übertragen**: fertige Regel-Sätze per Klick auf ein anderes Gerät kopieren
-- **Online-Update per Klick**: Die Firmware prüft auf Wunsch das neueste GitHub-Release und installiert es direkt übers Internet (*Einstellungen → Firmware-Aktualisierung*); die installierte Version steht im Fußbereich jeder Seite
+- **Online-Update per Klick**: Der Browser prüft das neueste GitHub-Release, lädt es herunter und spielt es direkt aufs Gerät ein (*Einstellungen → Firmware-Aktualisierung*) — das Gerät selbst braucht dafür weder Internetzugang noch TLS-RAM; als Fallback bleibt der geräteseitige Weg erhalten. Die installierte Version steht im Fußbereich jeder Seite
 - **JSON-API**: `GET /api/status`, `POST /api/control`, `GET|POST /api/devices`, `GET|POST /api/schedules`, `POST /api/adhoc`, `GET|POST /api/night`, `GET /api/history`, `GET|POST /api/filter`, `GET|POST /api/holiday`, `GET|POST /api/backup`, `GET|POST /api/update` (CORS-freigegeben)
 - Alles Weitere vom Original: Home-Assistant-Autodiscovery, MQTT-Steuerung, OTA-Firmware-Update, Erstkonfiguration per WLAN-Access-Point, Login-Schutz, mehrsprachige Systemseiten
 

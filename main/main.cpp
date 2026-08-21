@@ -2100,6 +2100,7 @@ void sendWrappedHTML(AsyncWebServerRequest *request, const String &content)
   String response = FPSTR(html_common_header);
   response.replace(F("_APP_NAME_"), appName);
   response.replace(F("_UNIT_NAME_"), hostname);
+  response.replace(F("_KS_VERSION_"), ks_version); // cache-busts /style.css after updates
 
 #ifdef ESP32
   response.reserve(response.length() + content.length() + footer.length() + 1); // avoid realloc churn
@@ -3113,14 +3114,20 @@ void handleApiUpdate(AsyncWebServerRequest *request)
     return;
   }
   String json;
-  json.reserve(160);
+  json.reserve(256);
   json += F("{\"cur\":\"");
   json += ks_version;
   json += F("\",\"latest\":\"");
   json += upd_latest;
   json += F("\",\"state\":");
   json += upd_state;
-  json += F(",\"err\":\"");
+  // the browser does the GitHub check/download itself (no TLS RAM needed on
+  // the device) and only needs to know which asset fits this build
+  json += F(",\"file\":\"");
+  json += KS_UPDATE_FILE;
+  json += F("\",\"repo\":\"");
+  json += ks_update_repo;
+  json += F("\",\"err\":\"");
   String err = upd_error;
   err.replace("\"", "'");
   json += err;
@@ -3156,6 +3163,7 @@ void handleTimers(AsyncWebServerRequest *request)
   String timersPage = FPSTR(timers_script);
   timersPage += FPSTR(html_page_timers);
   timersPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
+  timersPage.replace(F("_KS_VERSION_"), ks_version);
   sendWrappedHTML(request, timersPage);
 }
 
@@ -3168,6 +3176,7 @@ void handleDevicesPage(AsyncWebServerRequest *request)
   String devicesPage = FPSTR(devices_script);
   devicesPage += FPSTR(html_page_devices);
   devicesPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
+  devicesPage.replace(F("_KS_VERSION_"), ks_version);
   sendWrappedHTML(request, devicesPage);
 }
 
@@ -3496,6 +3505,7 @@ void handleControl(AsyncWebServerRequest *request)
   controlPage.replace(F("_TEMP_STEP_"), String(temp_step));
   controlPage.replace(F("_HEAT_MODE_SUPPORT_"), (String)supportHeatMode);
   controlPage.replace(F("_QUIET_MODE_SUPPORT_"), (String)supportQuietMode);
+  controlPage.replace(F("_KS_VERSION_"), ks_version);
 
   String htmlControlPage = FPSTR(html_page_control);
   // write_log("Enter HVAC control");
