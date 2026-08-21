@@ -2108,20 +2108,54 @@ void sendWrappedHTML(AsyncWebServerRequest *request, const String &content)
   response += footer;
   request->send(200, "text/html", response);
 #else
-  if (html_response != NULL)
-  {
-    delete[] html_response; // cleanup memory when send completed
-    html_response = NULL;
-  }
-  html_resp_length = response.length() + content.length() + footer.length();
-  html_response = new char[html_resp_length + 1];
-  memcpy(html_response, response.c_str(), response.length());
-  u_int16_t index = response.length();
-  memcpy(html_response + index, content.c_str(), content.length());
-  index += content.length();
-  memcpy(html_response + index, footer.c_str(), footer.length());
-  html_response[html_resp_length] = '\0';
-  request->send_P(200, "text/html", html_response);
+  // stream the three parts as a chunked response: the old code copied the
+  // whole page into one contiguous char[] first, and exactly that single
+  // large allocation is what a busy/fragmented ESP8266 heap fails to provide
+  // (UI freezes / OOM on page switches, issue #6)
+  static String chunkHead, chunkBody, chunkFoot;
+  chunkHead = response;
+  chunkBody = content;
+  chunkFoot = footer;
+  AsyncWebServerResponse *res = request->beginChunkedResponse(F("text/html"),
+      [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
+        size_t e1 = chunkHead.length();
+        size_t e2 = e1 + chunkBody.length();
+        size_t total = e2 + chunkFoot.length();
+        if (index >= total)
+          return 0;
+        size_t n = 0;
+        while (n < maxLen && index + n < total)
+        {
+          size_t pos = index + n;
+          const String *src;
+          size_t off, segEnd;
+          if (pos < e1)
+          {
+            src = &chunkHead;
+            off = pos;
+            segEnd = e1;
+          }
+          else if (pos < e2)
+          {
+            src = &chunkBody;
+            off = pos - e1;
+            segEnd = e2;
+          }
+          else
+          {
+            src = &chunkFoot;
+            off = pos - e2;
+            segEnd = total;
+          }
+          size_t run = segEnd - pos;
+          if (run > maxLen - n)
+            run = maxLen - n;
+          memcpy(buffer + n, src->c_str() + off, run);
+          n += run;
+        }
+        return n;
+      });
+  request->send(res);
 #endif
 }
 
