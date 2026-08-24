@@ -147,6 +147,24 @@ void handleApiNight(AsyncWebServerRequest *request);
 
 static bool apiAuthOk(AsyncWebServerRequest *request);
 
+// CN105 diagnosis (RX/TX log): RAM ring with the last raw packets in both
+// directions, shown on the /cn105 page - connection debugging without MQTT.
+// RAM only (~1.4KB), survives nothing, costs one memcpy per packet.
+#define PKTLOG_LEN 48
+#define PKTLOG_MAXB 24
+struct PktLogEntry
+{
+  uint32_t ms;  // millis() when captured
+  uint8_t dir;  // 1 = TX (ESP -> unit), 0 = RX
+  uint8_t len;
+  uint8_t data[PKTLOG_MAXB];
+};
+PktLogEntry pktlog[PKTLOG_LEN];
+uint16_t pktlog_head = 0;
+uint32_t pktlog_total = 0;
+void handleCn105Page(AsyncWebServerRequest *request);
+void handleApiCn105(AsyncWebServerRequest *request);
+
 // room temperature history: one sample every 5 minutes, RAM-only ring (24h)
 // plus a coarse 30-minute ring covering 7 days
 #define HIST_LEN 288
@@ -416,12 +434,14 @@ void setup()
         server.on("/api/filter", handleApiFilter);
         server.on("/api/holiday", handleApiHoliday);
         server.on("/api/clean", handleApiClean);
+        server.on("/api/cn105", handleApiCn105);
         server.on("/api/backup", handleApiBackup);
         server.on("/", handleRoot);
         server.on("/control", handleControl);
         server.on("/timers", handleTimers);
         server.on("/devices", handleDevicesPage);
         server.on("/backup", handleBackupPage);
+        server.on("/cn105", handleCn105Page);
         server.on("/setup", handleSetup);
         server.on("/mqtt", handleMqtt);
         server.on("/wifi", handleWifi);
@@ -2001,6 +2021,8 @@ void initCaptivePortal()
   server.on("/unit", handleUnit);
   server.on("/control", handleControl);
   server.on("/status", handleStatus);
+  server.on("/cn105", handleCn105Page);
+  server.on("/api/cn105", handleApiCn105);
   if (!isSecureEnable())
   {
     server.on("/upgrade", handleUpgrade);
@@ -3445,6 +3467,58 @@ void handleBackupPage(AsyncWebServerRequest *request)
   sendWrappedHTML(request, backupPage);
 }
 
+void handleCn105Page(AsyncWebServerRequest *request)
+{
+  if (!checkLogin(request))
+  {
+    return;
+  }
+  String cnPage = FPSTR(cn105_script);
+  cnPage += FPSTR(html_page_cn105);
+  cnPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
+  sendWrappedHTML(request, cnPage);
+}
+
+void handleApiCn105(AsyncWebServerRequest *request)
+{
+  if (!apiAuthOk(request))
+    return;
+  String json;
+  json.reserve(PKTLOG_LEN * 90 + 96);
+  json += F("{\"c\":");
+  json += hp.isConnected() ? F("true") : F("false");
+  json += F(",\"r\":");
+  json += hpConnectionTotalRetries;
+  json += F(",\"n\":");
+  json += pktlog_total;
+  json += F(",\"up\":");
+  json += millis();
+  json += F(",\"p\":[");
+  uint16_t count = pktlog_total < PKTLOG_LEN ? (uint16_t)pktlog_total : (uint16_t)PKTLOG_LEN;
+  const char hexd[] = "0123456789ABCDEF";
+  for (uint16_t i = 0; i < count; i++)
+  {
+    // oldest first
+    uint16_t idx = (uint16_t)((pktlog_head + PKTLOG_LEN - count + i) % PKTLOG_LEN);
+    PktLogEntry &e = pktlog[idx];
+    if (i > 0)
+      json += ',';
+    json += F("{\"t\":");
+    json += e.ms;
+    json += F(",\"d\":");
+    json += e.dir;
+    json += F(",\"x\":\"");
+    for (uint8_t b = 0; b < e.len; b++)
+    {
+      json += hexd[e.data[b] >> 4];
+      json += hexd[e.data[b] & 0x0F];
+    }
+    json += F("\"}");
+  }
+  json += F("]}");
+  request->send(200, "application/json", json);
+}
+
 // every config file that goes into a backup bundle; console.log is runtime-only
 static const char *const backup_conf_files[] = {
     wifi_conf, mqtt_conf, unit_conf, others_conf, devices_conf,
@@ -4460,6 +4534,14 @@ void sendKeepAlive(bool force = false)
 
 void hpPacketDebug(byte *packet, unsigned int length, const char *packetDirection)
 {
+  // always capture into the CN105 ring, independent of the MQTT debug flag
+  PktLogEntry &e = pktlog[pktlog_head];
+  e.ms = millis();
+  e.dir = (packetDirection != NULL && strcmp(packetDirection, "packetSent") == 0) ? 1 : 0;
+  e.len = (uint8_t)(length > PKTLOG_MAXB ? PKTLOG_MAXB : length);
+  memcpy(e.data, packet, e.len);
+  pktlog_head = (uint16_t)((pktlog_head + 1) % PKTLOG_LEN);
+  pktlog_total++;
   if (_debugModePckts)
   {
     String message;

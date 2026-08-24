@@ -39,6 +39,7 @@ made with ❤ in Lingen
 - **Alle aus**: Ein Knopf auf der Steuerung schaltet alle verknüpften Geräte auf einmal ab
 - **Temperatur-Verlauf**: 24-Stunden-Kurve der Raumtemperatur direkt auf der Steuerung (auch für die anderen Geräte per Tab)
 - **Filter-Erinnerung**: Betriebsstundenzähler pro Gerät; nach einstellbarer Laufzeit erinnert die Steuerung ans Filterreinigen (*Einstellungen → Zeitpläne → Filter*)
+- **CN105-Diagnose**: Live-RX/TX-Log der seriellen Verbindung zum Innengerät (*Einstellungen → Status → CN105-Diagnose*) — die letzten 48 Pakete mit Zeitstempel, Richtung und Typ-Dekodierung, mit Pause- und Kopier-Funktion für Fehlerberichte; ideal bei Verkabelungs- und Verbindungsproblemen
 - **Selbstreinigung (CLEAN)**: Trocknet das Innengerät nach Kühl-/Entfeuchtungsbetrieb, um Schimmel und Gerüche zu verhindern — nach dem Ausschalten läuft der Lüfter für eine einstellbare Dauer (Standard 15 min) auf kleinster Stufe weiter und schaltet dann wirklich ab; erkennt jeden Aus-Weg (Web, MQTT, Zeitplan, IR-Fernbedienung). Der 🧼-Button auf der Steuerung startet die Reinigung auch manuell (*Konfiguration: Einstellungen → Zeitpläne → Selbstreinigung*)
 - **Urlaubsmodus**: pausiert Zeitpläne und Nacht-Automatik (auf Wunsch auf allen Geräten), optional mit Frostschutz-Wächter
 - **Zeitpläne übertragen**: fertige Regel-Sätze per Klick auf ein anderes Gerät kopieren
