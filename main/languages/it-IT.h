@@ -104,6 +104,8 @@ namespace it
   const char txt_status_title[] PROGMEM = "Stato";
   const char txt_status_hvac[] PROGMEM = "Stato HVAC";
   const char txt_retries_hvac[] PROGMEM = "HVAC Connection Retries";
+  const char txt_status_fault[] PROGMEM = "Guasto dispositivo";
+  const char txt_fault_none[] PROGMEM = "Nessun guasto";
   const char txt_status_mqtt[] PROGMEM = "Stato MQTT";
   const char txt_status_wifi[] PROGMEM = "WIFI RSSI";
   const char txt_status_connect[] PROGMEM = "CONNESSO";

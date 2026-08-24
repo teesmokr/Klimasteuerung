@@ -137,6 +137,8 @@ pages["status.html"] = wrap(tpl["html_page_status"], {
     "_TXT_BACK_": "Zur\u00fcck",
     "_HVAC_STATUS_": "<font color='green'><b>verbunden</b></font>",
     "_HVAC_RETRIES_": "0",
+    "_TXT_STATUS_FAULT_": "Gerätestörung",
+    "_HVAC_FAULT_": "<font color='green'><b>Keine Störung</b></font>",
     "_MQTT_STATUS_": "<font color='green'><b>verbunden</b></font>",
     "_WIFI_IP_": "<font color='blue'><b>192.168.1.42</b></font>",
     "_WIFI_BSSID_": "A4:2B:B0:C3:11:22",

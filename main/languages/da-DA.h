@@ -103,6 +103,8 @@ namespace da
   const char txt_status_title[] PROGMEM = "Status";
   const char txt_status_hvac[] PROGMEM = "HVAC Status";
   const char txt_retries_hvac[] PROGMEM = "HVAC Connection Retries";
+  const char txt_status_fault[] PROGMEM = "Enhedsfejl";
+  const char txt_fault_none[] PROGMEM = "Ingen fejl";
   const char txt_status_mqtt[] PROGMEM = "MQTT Status";
   const char txt_status_wifi[] PROGMEM = "WIFI RSSI";
   const char txt_status_connect[] PROGMEM = "CONNECTED";

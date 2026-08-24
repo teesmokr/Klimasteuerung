@@ -103,6 +103,8 @@ namespace de
   const char txt_status_title[] PROGMEM = "Status";
   const char txt_status_hvac[] PROGMEM = "Klimaanlage";
   const char txt_retries_hvac[] PROGMEM = "Verbindungsversuche";
+  const char txt_status_fault[] PROGMEM = "Gerätestörung";
+  const char txt_fault_none[] PROGMEM = "Keine Störung";
   const char txt_status_mqtt[] PROGMEM = "MQTT-Verbindung";
   const char txt_status_wifi[] PROGMEM = "WLAN-Signal";
   const char txt_status_connect[] PROGMEM = "Verbunden";

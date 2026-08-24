@@ -165,6 +165,22 @@ uint32_t pktlog_total = 0;
 void handleCn105Page(AsyncWebServerRequest *request);
 void handleApiCn105(AsyncWebServerRequest *request);
 
+// device fault / abnormal state reported by the indoor unit.
+// The Mitsubishi CN105 info reply of type 0x04 carries an abnormal-state code
+// that the HeatPump library leaves unparsed. We decode it straight from the raw
+// packet stream in hpPacketDebug(), so no change to the vendored library is
+// needed. A value of 0x0000 or 0x8000 means "no fault". The exact byte layout
+// is not documented for every model, so we never invent a model-specific label
+// (like "P8"); the raw code is shown for lookup and the raw payload bytes are
+// exposed on the CN105 diagnosis page so a fault can be verified on the device.
+uint16_t hvac_fault_code = 0;    // 0 = no fault currently reported
+uint16_t hvac_fault_pending = 0; // debounce: candidate awaiting confirmation
+uint32_t hvac_fault_ms = 0;      // millis() when the fault was last seen
+bool hvac_fault_valid = false;   // at least one 0x04 reply has been decoded
+uint8_t hvac_fault_raw[8] = {0}; // raw abnormal-state payload for diagnosis
+uint8_t hvac_fault_raw_len = 0;
+String hvacFaultText(); // "" when no fault, else "0xXXXX"
+
 // room temperature history: one sample every 5 minutes, RAM-only ring (24h)
 // plus a coarse 30-minute ring covering 7 days
 #define HIST_LEN 288
@@ -2841,6 +2857,7 @@ void handleStatus(AsyncWebServerRequest *request)
   statusPage.replace(F("_TXT_STATUS_TITLE_"), translatedWord(FL_(txt_status_title)));
   statusPage.replace(F("_TXT_STATUS_HVAC_"), translatedWord(FL_(txt_status_hvac)));
   statusPage.replace(F("_TXT_RETRIES_HVAC_"), translatedWord(FL_(txt_retries_hvac)));
+  statusPage.replace(F("_TXT_STATUS_FAULT_"), translatedWord(FL_(txt_status_fault)));
   statusPage.replace(F("_TXT_STATUS_MQTT_"), translatedWord(FL_(txt_status_mqtt)));
   statusPage.replace(F("_TXT_STATUS_WIFI_IP_"), translatedWord(FL_(txt_status_wifi_ip)));
   statusPage.replace(F("_TXT_STATUS_WIFI_"), translatedWord(FL_(txt_status_wifi)));
@@ -2869,6 +2886,18 @@ void handleStatus(AsyncWebServerRequest *request)
     statusPage.replace(F("_HVAC_STATUS_"), disconnected);
   }
   statusPage.replace(F("_HVAC_RETRIES_"), String(hpConnectionTotalRetries));
+  if (!hvac_fault_valid)
+  {
+    statusPage.replace(F("_HVAC_FAULT_"), F("<font color='gray'>&#8211;</font>"));
+  }
+  else if (hvac_fault_code == 0)
+  {
+    statusPage.replace(F("_HVAC_FAULT_"), F("<font color='green'><b>") + String(translatedWord(FL_(txt_fault_none))) + F("</b></font>"));
+  }
+  else
+  {
+    statusPage.replace(F("_HVAC_FAULT_"), F("<font color='red'><b>") + hvacFaultText() + F("</b></font>"));
+  }
   if (WiFi.localIP().toString() == "0.0.0.0" || WiFi.localIP().toString() == "")
   {
     ESP_LOGD(TAG, "Failed to get IP address");
@@ -2914,6 +2943,16 @@ static bool apiAuthOk(AsyncWebServerRequest *request)
     return false;
   }
   return true;
+}
+
+// format the reported HVAC fault as "0xXXXX", or "" when the unit reports none
+String hvacFaultText()
+{
+  if (hvac_fault_code == 0)
+    return String();
+  char buf[7];
+  snprintf(buf, sizeof(buf), "0x%04X", hvac_fault_code);
+  return String(buf);
 }
 
 void handleApiStatus(AsyncWebServerRequest *request)
@@ -2978,7 +3017,9 @@ void handleApiStatus(AsyncWebServerRequest *request)
   json += cleanLeftMinutes();
   json += F(",\"clm\":");
   json += clean_minutes;
-  json += F("}");
+  json += F(",\"fault\":\"");
+  json += hvacFaultText();
+  json += F("\"}");
   request->send(200, "application/json", json);
 }
 
@@ -3493,7 +3534,20 @@ void handleApiCn105(AsyncWebServerRequest *request)
   json += pktlog_total;
   json += F(",\"up\":");
   json += millis();
-  json += F(",\"p\":[");
+  json += F(",\"fault\":\"");
+  json += hvacFaultText();
+  json += F("\",\"fv\":");
+  json += hvac_fault_valid ? F("true") : F("false");
+  json += F(",\"fraw\":\"");
+  {
+    const char hexf[] = "0123456789ABCDEF";
+    for (uint8_t b = 0; b < hvac_fault_raw_len; b++)
+    {
+      json += hexf[hvac_fault_raw[b] >> 4];
+      json += hexf[hvac_fault_raw[b] & 0x0F];
+    }
+  }
+  json += F("\",\"p\":[");
   uint16_t count = pktlog_total < PKTLOG_LEN ? (uint16_t)pktlog_total : (uint16_t)PKTLOG_LEN;
   const char hexd[] = "0123456789ABCDEF";
   for (uint16_t i = 0; i < count; i++)
@@ -4542,6 +4596,32 @@ void hpPacketDebug(byte *packet, unsigned int length, const char *packetDirectio
   memcpy(e.data, packet, e.len);
   pktlog_head = (uint16_t)((pktlog_head + 1) % PKTLOG_LEN);
   pktlog_total++;
+
+  // decode the indoor unit's abnormal-state reply (CN105 info type 0x04), which
+  // the HeatPump library ignores. In the callback buffer a received info packet
+  // is laid out as [0..4]=header (header[1]=0x62 on a reply), [5]=data[0]=info
+  // type, [6..]=data[1..]; the abnormal-state code sits in data[4]/data[5].
+  if (e.dir == 0 && length >= 11 && packet[1] == 0x62 && packet[5] == 0x04)
+  {
+    uint16_t code = ((uint16_t)packet[9] << 8) | packet[10];
+    if (code == 0x8000) // documented "no abnormality" sentinel
+      code = 0;
+    hvac_fault_valid = true;
+    hvac_fault_raw_len = (uint8_t)(length - 6 > sizeof(hvac_fault_raw) ? sizeof(hvac_fault_raw) : length - 6);
+    for (uint8_t i = 0; i < hvac_fault_raw_len; i++)
+      hvac_fault_raw[i] = packet[6 + i];
+    // debounce: only accept a value once it shows up twice in a row, so a single
+    // corrupted packet cannot raise (or clear) a fault on its own.
+    if (code == hvac_fault_pending)
+    {
+      if (code != hvac_fault_code)
+        hvac_fault_code = code;
+      if (code != 0)
+        hvac_fault_ms = millis();
+    }
+    hvac_fault_pending = code;
+  }
+
   if (_debugModePckts)
   {
     String message;

@@ -104,6 +104,8 @@ namespace vi
   const char txt_status_title[] PROGMEM = "Trạng thái";
   const char txt_status_hvac[] PROGMEM = "Trạng thái ĐH";
   const char txt_retries_hvac[] PROGMEM = "ĐH thử lại kết nối";
+  const char txt_status_fault[] PROGMEM = "Lỗi thiết bị";
+  const char txt_fault_none[] PROGMEM = "Không có lỗi";
   const char txt_status_mqtt[] PROGMEM = "Trạng thái MQTT";
   const char txt_status_wifi_ip[] PROGMEM = "WIFI IP";
   const char txt_failed_get_wifi_ip[] PROGMEM = "Lỗi khi lấy địa chỉ IP";
