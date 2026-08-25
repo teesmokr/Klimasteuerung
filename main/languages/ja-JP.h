@@ -104,6 +104,8 @@ namespace ja
   const char txt_status_title[] PROGMEM = "ステータス";
   const char txt_status_hvac[] PROGMEM = "エアコン本体";
   const char txt_retries_hvac[] PROGMEM = "HVAC Connection Retries";
+  const char txt_status_fault[] PROGMEM = "機器の異常";
+  const char txt_fault_none[] PROGMEM = "異常なし";
   const char txt_status_mqtt[] PROGMEM = "MQTT";
   const char txt_status_wifi[] PROGMEM = "WIFI RSSI";
   const char txt_status_connect[] PROGMEM = "接続中";

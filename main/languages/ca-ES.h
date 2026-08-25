@@ -104,6 +104,8 @@ namespace ca
   const char txt_status_title[] PROGMEM = "Estat";
   const char txt_status_hvac[] PROGMEM = "Estat HVAC";
   const char txt_retries_hvac[] PROGMEM = "Nombre d'intents de connexió HVAC";
+  const char txt_status_fault[] PROGMEM = "Avaria del dispositiu";
+  const char txt_fault_none[] PROGMEM = "Sense avaria";
   const char txt_status_mqtt[] PROGMEM = "Estat MQTT";
   const char txt_status_wifi_ip[] PROGMEM = "IP WIFI";
   const char txt_failed_get_wifi_ip[] PROGMEM = "No s'ha pogut obtenir l'adreça IP";

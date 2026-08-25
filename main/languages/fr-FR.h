@@ -104,6 +104,8 @@ namespace fr
   const char txt_status_title[] PROGMEM = "Etats";
   const char txt_status_hvac[] PROGMEM = "Etat HVAC";
   const char txt_retries_hvac[] PROGMEM = "HVAC Connection Retries";
+  const char txt_status_fault[] PROGMEM = "Défaut de l'appareil";
+  const char txt_fault_none[] PROGMEM = "Aucun défaut";
   const char txt_status_mqtt[] PROGMEM = "Etat MQTT";
   const char txt_status_wifi[] PROGMEM = "WIFI RSSI";
   const char txt_status_connect[] PROGMEM = "CONNECTE";
