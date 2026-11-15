@@ -103,6 +103,19 @@ void scheduleApply(ScheduleRule &rule, bool start);
 // ad-hoc run: start now in the current mode, auto power-off after a
 // configurable duration (RAM only - a reboot cancels the auto-off)
 uint16_t adhoc_minutes = 60;
+// fan/vane profile of an ad-hoc run; empty = keep what the unit has. The
+// previous values are snapshotted at the start and restored when the run ends.
+char adhoc_fan[8] = "";
+char adhoc_vane[8] = "";
+char adhoc_wvane[8] = "";
+struct AdhocSnapshot
+{
+  bool valid;
+  char fan[8];
+  char vane[8];
+  char wvane[8];
+};
+AdhocSnapshot adhoc_prev = {false, "", "", ""};
 unsigned long adhocEndMillis = 0;
 bool loadAdhoc();
 bool saveAdhoc(uint16_t minutes);
@@ -1066,6 +1079,27 @@ bool saveSchedules(const String& schedulesJson)
   return true;
 }
 
+// accept only values the heat pump library knows; anything else means "keep"
+static bool adhocInList(const char *v, const char *const *list, uint8_t n)
+{
+  for (uint8_t i = 0; i < n; i++)
+  {
+    if (strcmp(v, list[i]) == 0)
+      return true;
+  }
+  return false;
+}
+
+static void adhocSetProfile(const char *fan, const char *vane, const char *wvane)
+{
+  static const char *const fans[] = {"AUTO", "QUIET", "1", "2", "3", "4"};
+  static const char *const vanes[] = {"AUTO", "SWING", "1", "2", "3", "4", "5"};
+  static const char *const wvanes[] = {"SWING", "<<", "<", "|", ">", ">>", "<>"};
+  strlcpy(adhoc_fan, adhocInList(fan, fans, 6) ? fan : "", sizeof(adhoc_fan));
+  strlcpy(adhoc_vane, adhocInList(vane, vanes, 7) ? vane : "", sizeof(adhoc_vane));
+  strlcpy(adhoc_wvane, adhocInList(wvane, wvanes, 7) ? wvane : "", sizeof(adhoc_wvane));
+}
+
 bool loadAdhoc()
 {
   if (!SPIFFS.exists(adhoc_conf))
@@ -1077,7 +1111,7 @@ bool loadAdhoc()
   {
     return false;
   }
-  const size_t capacity = JSON_OBJECT_SIZE(1) + 32;
+  const size_t capacity = JSON_OBJECT_SIZE(4) + 96;
   DynamicJsonDocument doc(capacity);
   DeserializationError err = deserializeJson(doc, configFile);
   configFile.close();
@@ -1090,6 +1124,7 @@ bool loadAdhoc()
   {
     adhoc_minutes = m;
   }
+  adhocSetProfile(doc["fan"] | "", doc["vane"] | "", doc["wv"] | "");
   return true;
 }
 
@@ -1099,9 +1134,12 @@ bool saveAdhoc(uint16_t minutes)
   {
     return false;
   }
-  const size_t capacity = JSON_OBJECT_SIZE(1) + 32;
+  const size_t capacity = JSON_OBJECT_SIZE(4) + 96;
   DynamicJsonDocument doc(capacity);
   doc["m"] = minutes;
+  doc["fan"] = adhoc_fan;
+  doc["vane"] = adhoc_vane;
+  doc["wv"] = adhoc_wvane;
   File configFile = SPIFFS.open(adhoc_conf, "w");
   if (!configFile)
   {
@@ -1128,13 +1166,70 @@ static void adhocPower(bool on)
   requestHpUpdateTime = millis() + 10;
 }
 
+static void adhocSend(heatpumpSettings &settings)
+{
+  hp.setSettings(settings);
+  if (hp.getSettings() == hp.getWantedSettings())
+  {
+    return; // nothing to send
+  }
+  requestHpUpdate = true;
+  requestHpUpdateTime = millis() + 10;
+}
+
+// power on with the configured fan/vane profile
+static void adhocStart()
+{
+  if (!hp.isConnected())
+    return;
+  heatpumpSettings settings = hpBaseSettings();
+  if (!adhoc_prev.valid) // a restart of a running ad-hoc keeps the first snapshot
+  {
+    strlcpy(adhoc_prev.fan, settings.fan != NULL ? settings.fan : "", sizeof(adhoc_prev.fan));
+    strlcpy(adhoc_prev.vane, settings.vane != NULL ? settings.vane : "", sizeof(adhoc_prev.vane));
+    strlcpy(adhoc_prev.wvane, settings.wideVane != NULL ? settings.wideVane : "", sizeof(adhoc_prev.wvane));
+    adhoc_prev.valid = true;
+  }
+  settings.power = "ON";
+  if (adhoc_fan[0] != '\0')
+    settings.fan = adhoc_fan;
+  if (adhoc_vane[0] != '\0')
+    settings.vane = adhoc_vane;
+  if (adhoc_wvane[0] != '\0')
+    settings.wideVane = adhoc_wvane;
+  adhocSend(settings);
+}
+
+// power off and put back the fan/vane settings from before the run
+static void adhocStop()
+{
+  if (!hp.isConnected())
+  {
+    adhoc_prev.valid = false;
+    return;
+  }
+  heatpumpSettings settings = hpBaseSettings();
+  settings.power = "OFF";
+  if (adhoc_prev.valid)
+  {
+    if (adhoc_fan[0] != '\0' && adhoc_prev.fan[0] != '\0')
+      settings.fan = adhoc_prev.fan;
+    if (adhoc_vane[0] != '\0' && adhoc_prev.vane[0] != '\0')
+      settings.vane = adhoc_prev.vane;
+    if (adhoc_wvane[0] != '\0' && adhoc_prev.wvane[0] != '\0')
+      settings.wideVane = adhoc_prev.wvane;
+    adhoc_prev.valid = false;
+  }
+  adhocSend(settings);
+}
+
 void checkAdhoc()
 {
   if (adhocEndMillis != 0 && (long)(millis() - adhocEndMillis) >= 0)
   {
     adhocEndMillis = 0;
     ESP_LOGI(TAG, "Ad-hoc run finished, power off");
-    adhocPower(false);
+    adhocStop();
   }
 }
 
@@ -3162,6 +3257,10 @@ void handleApiAdhoc(AsyncWebServerRequest *request)
   if (request->hasArg(F("set")))
   {
     uint16_t m = (uint16_t)request->arg(F("set")).toInt();
+    if (request->hasArg(F("fan")) || request->hasArg(F("vane")) || request->hasArg(F("wv")))
+    {
+      adhocSetProfile(request->arg(F("fan")).c_str(), request->arg(F("vane")).c_str(), request->arg(F("wv")).c_str());
+    }
     if (saveAdhoc(m))
     {
       request->send(200, "application/json", String(F("{\"ok\":true,\"m\":")) + m + F("}"));
@@ -3175,7 +3274,7 @@ void handleApiAdhoc(AsyncWebServerRequest *request)
   if (request->hasArg(F("stop")))
   {
     adhocEndMillis = 0;
-    adhocPower(false);
+    adhocStop();
     request->send(200, "application/json", String(F("{\"ok\":true,\"left\":0}")));
     return;
   }
@@ -3196,7 +3295,7 @@ void handleApiAdhoc(AsyncWebServerRequest *request)
     adhocEndMillis = millis() + (unsigned long)m * 60000UL;
     if (adhocEndMillis == 0)
       adhocEndMillis = 1; // avoid the 'inactive' sentinel on wrap
-    adhocPower(true);
+    adhocStart();
     request->send(200, "application/json", String(F("{\"ok\":true,\"left\":")) + m + F("}"));
     return;
   }
@@ -3208,7 +3307,9 @@ void handleApiAdhoc(AsyncWebServerRequest *request)
     if (remain > 0)
       left = (uint16_t)((remain + 59999L) / 60000L);
   }
-  request->send(200, "application/json", String(F("{\"m\":")) + adhoc_minutes + F(",\"left\":") + left + F("}"));
+  request->send(200, "application/json", String(F("{\"m\":")) + adhoc_minutes + F(",\"left\":") + left +
+                                             F(",\"fan\":\"") + adhoc_fan + F("\",\"vane\":\"") + adhoc_vane +
+                                             F("\",\"wv\":\"") + adhoc_wvane + F("\"}"));
 }
 
 static uint16_t cleanLeftMinutes()
