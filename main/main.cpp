@@ -147,6 +147,15 @@ void handleApiNight(AsyncWebServerRequest *request);
 
 static bool apiAuthOk(AsyncWebServerRequest *request);
 
+// The state a new command is built on (and that the panel shows): while a
+// command is still on its way to the unit this is the wanted state, otherwise
+// what the unit reports. Building on the reported state alone lost the power-on
+// when a second command (e.g. the temperature) followed within a second or two.
+static heatpumpSettings hpBaseSettings()
+{
+  return hp.isUpdatePending() ? hp.getWantedSettings() : hp.getSettings();
+}
+
 // CN105 diagnosis (RX/TX log): RAM ring with the last raw packets in both
 // directions, shown on the /cn105 page - connection debugging without MQTT.
 // RAM only (~1.4KB), survives nothing, costs one memcpy per packet.
@@ -1108,7 +1117,7 @@ static void adhocPower(bool on)
 {
   if (!hp.isConnected())
     return;
-  heatpumpSettings settings = hp.getSettings();
+  heatpumpSettings settings = hpBaseSettings();
   settings.power = on ? "ON" : "OFF";
   hp.setSettings(settings);
   if (hp.getSettings() == hp.getWantedSettings())
@@ -1200,7 +1209,7 @@ void applyNight()
 {
   if (!hp.isConnected() || night_active)
     return;
-  heatpumpSettings settings = hp.getSettings();
+  heatpumpSettings settings = hpBaseSettings();
   // snapshot for restore
   strlcpy(night_prev.power, settings.power != NULL ? settings.power : "ON", sizeof(night_prev.power));
   strlcpy(night_prev.mode, settings.mode != NULL ? settings.mode : "", sizeof(night_prev.mode));
@@ -1233,7 +1242,7 @@ void endNight()
   night_active = false;
   if (!hp.isConnected())
     return;
-  heatpumpSettings settings = hp.getSettings();
+  heatpumpSettings settings = hpBaseSettings();
   if (night_prev.valid)
   {
     settings.power = night_prev.power;
@@ -1600,7 +1609,7 @@ static void cleanStart()
 {
   if (!hp.isConnected())
     return;
-  heatpumpSettings s = hp.getSettings();
+  heatpumpSettings s = hpBaseSettings();
   s.power = "ON";
   s.mode = "FAN";
   s.fan = supportQuietMode ? "QUIET" : "1";
@@ -1659,7 +1668,7 @@ void checkHoliday()
   }
   if (!holiday_frost || !hp.isConnected())
     return;
-  heatpumpSettings settings = hp.getSettings();
+  heatpumpSettings settings = hpBaseSettings();
   float room = hp.getRoomTemperature();
   bool powerOn = settings.power != NULL && strcmp(settings.power, "ON") == 0;
   if (!frost_active && !powerOn && room > -40 && room < holiday_frost_temp)
@@ -1726,7 +1735,7 @@ void scheduleApply(ScheduleRule &rule, bool start)
     // this unit: talk to the heat pump directly
     if (!hp.isConnected())
       return;
-    heatpumpSettings settings = hp.getSettings();
+    heatpumpSettings settings = hpBaseSettings();
     if (start)
     {
       settings.power = "ON";
@@ -2959,7 +2968,7 @@ void handleApiStatus(AsyncWebServerRequest *request)
 {
   if (!apiAuthOk(request))
     return;
-  heatpumpSettings s = hp.getSettings();
+  heatpumpSettings s = hpBaseSettings();
   String json;
   json.reserve(384);
   json += F("{\"name\":\"");
@@ -2977,7 +2986,7 @@ void handleApiStatus(AsyncWebServerRequest *request)
   json += F("\",\"widevane\":\"");
   json += s.wideVane != NULL ? s.wideVane : "";
   json += F("\",\"temp\":");
-  json += String(convertCelsiusToLocalUnit(hp.getTemperature(), useFahrenheit), 1);
+  json += String(convertCelsiusToLocalUnit(s.temperature, useFahrenheit), 1);
   json += F(",\"room\":");
   json += String(convertCelsiusToLocalUnit(hp.getRoomTemperature(), useFahrenheit), 1);
   json += F(",\"min\":");
@@ -3017,6 +3026,8 @@ void handleApiStatus(AsyncWebServerRequest *request)
   json += cleanLeftMinutes();
   json += F(",\"clm\":");
   json += clean_minutes;
+  json += F(",\"pend\":");
+  json += hp.isUpdatePending() ? F("true") : F("false");
   json += F(",\"fault\":\"");
   json += hvacFaultText();
   json += F("\"}");
@@ -3050,7 +3061,7 @@ void handleApiControl(AsyncWebServerRequest *request)
     }
     return;
   }
-  heatpumpSettings settings = hp.getSettings();
+  heatpumpSettings settings = hpBaseSettings();
   change_states(request, settings);
   request->send(200, "application/json", String(F("{\"ok\":true}")));
 }
@@ -3901,7 +3912,7 @@ void handleControl(AsyncWebServerRequest *request)
     return;
   }
 
-  heatpumpSettings settings = hp.getSettings();
+  heatpumpSettings settings = hpBaseSettings();
   if (hp.isConnected())
   {
     settings = change_states(request, settings);
@@ -3929,7 +3940,7 @@ void handleControl(AsyncWebServerRequest *request)
   // set data
   htmlControlPage.replace(F("_ROOMTEMP_"), String(convertCelsiusToLocalUnit(hp.getRoomTemperature(), useFahrenheit)));
   htmlControlPage.replace(F("_TEMP_SCALE_"), getTemperatureScale());
-  htmlControlPage.replace(F("_TEMP_"), String(convertCelsiusToLocalUnit(hp.getTemperature(), useFahrenheit)));
+  htmlControlPage.replace(F("_TEMP_"), String(convertCelsiusToLocalUnit(settings.temperature, useFahrenheit)));
 
   if (!(String(settings.power).isEmpty())) // null may crash with multitask
   {

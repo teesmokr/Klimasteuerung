@@ -31,6 +31,11 @@ jobs:
       - name: Install PlatformIO Core
         run: pip install --upgrade platformio
 
+      - name: HeatPump link simulation
+        run: |
+          cd ${{ github.workspace }}/app
+          test/hp_sim/run.sh
+
       - name: Build Generic8266(ESP-01)
         run: |
           cd ${{ github.workspace }}/app

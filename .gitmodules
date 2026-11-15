@@ -2,9 +2,6 @@
 	path = components/ArduinoJson
 	url = https://github.com/bblanchon/ArduinoJson.git
 	branch = 6.x
-[submodule "components/HeatPump"]
-	path = components/HeatPump
-	url = https://github.com/dzungpv/HeatPump
 [submodule "components/ESPAsyncWebServer"]
 	path = components/ESPAsyncWebServer
 	url = https://github.com/ESP32Async/ESPAsyncWebServer.git
