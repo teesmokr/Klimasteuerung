@@ -268,6 +268,7 @@ const char html_page_control[] PROGMEM =
                         "<circle id='droom' r='6' style='display:none'/>"
                         "<circle id='dknob' r='13'/>"
                     "</svg>"
+                    "<div id='dgrip'></div>"
                     "<div class='dcenter'>"
                         "<span class='dlabel'>_TXT_CTRL_TEMP_</span>"
                         "<div class='dtemp'><span id='TEMP'>_TEMP_</span><span class='dscale' id='tempScale'>&#176;_TEMP_SCALE_</span></div>"
