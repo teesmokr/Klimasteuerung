@@ -1,0 +1,62 @@
+# Legt ein GitHub-Release fuer die Version aus main/config.h an.
+# Start: Actions -> Release -> "Run workflow" (nur auf main).
+# Voraussetzungen: firmware/*.bin enthalten diese Version und
+# releases/v<Version>.md enthaelt den Release-Text.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: "Titel des Release (leer = 'Klimasteuerung v<Version>')"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TITLE: ${{ inputs.title }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version und Voraussetzungen pruefen
+        run: |
+          VER=$(sed -n 's/.*ks_version = "\([0-9.]*\)".*/\1/p' main/config.h)
+          test -n "$VER" || { echo "ks_version nicht gefunden"; exit 1; }
+          echo "VER=$VER" >> "$GITHUB_ENV"
+          if gh release view "v$VER" >/dev/null 2>&1; then
+            echo "Release v$VER existiert bereits"; exit 1
+          fi
+          test -f "releases/v$VER.md" || { echo "releases/v$VER.md fehlt"; exit 1; }
+          for f in Klimasteuerung_ESP32_ota.bin Klimasteuerung_WEMOS_D1_Mini.bin Klimasteuerung_ESP8266-ESP01.bin; do
+            grep -a -q -F "$VER" "firmware/$f" || { echo "firmware/$f enthaelt nicht Version $VER"; exit 1; }
+          done
+
+      - name: HeatPump link simulation
+        run: test/hp_sim/run.sh
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: ESP32-Factory-Image bauen
+        run: |
+          pip install --upgrade platformio
+          pio run -e ESP32DEV
+          mkdir -p out
+          cp .pio/build/ESP32DEV/firmware.factory.bin out/Klimasteuerung_ESP32_factory_0x0.bin
+          cp firmware/*.bin out/
+
+      - name: Release anlegen
+        run: |
+          gh release create "v$VER" out/*.bin \
+            --target "$GITHUB_SHA" \
+            --title "${TITLE:-Klimasteuerung v$VER}" \
+            --notes-file "releases/v$VER.md"
