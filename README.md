@@ -35,7 +35,7 @@ made with ❤ in Lingen
   - Zeitfenster von/bis, Modus, Zieltemperatur, optional „nach Ablauf ausschalten"
   - Steuert auch die anderen hinterlegten Geräte (per HTTP auf deren API)
 - **Modernes Design**: flach und reduziert – große Typografie, dünne Linien, keine Karten oder Schatten; automatischer Hell-/Dunkelmodus, responsiv für Handy und Desktop, keine externen Ressourcen (funktioniert auch offline im AP-Modus)
-- **Wie eine App**: Web-App-Manifest + Icon — „Zum Startbildschirm hinzufügen" am Handy, und die Klimasteuerung startet mit eigenem Icon (auf iOS im Vollbild)
+- **Wie eine App**: In Safari (iPhone) oder Chrome (Android) „Zum Home-Bildschirm" wählen — die Klimasteuerung startet mit eigenem Icon im Vollbild, mit Statusleiste in Seitenfarbe, Abstand zu Notch und Home-Balken und sofort aktuellem Stand beim Öffnen
 - **Alle aus**: Ein Knopf auf der Steuerung schaltet alle verknüpften Geräte auf einmal ab
 - **Temperatur-Verlauf mit Laufzeit**: Kurve der Raumtemperatur über 24 Stunden oder 7 Tage direkt auf der Steuerung, dazu Balken, wann die Anlage lief, und die Gesamtlaufzeit (auch für die anderen Geräte per Tab)
 - **Filter-Erinnerung**: Betriebsstundenzähler pro Gerät; nach einstellbarer Laufzeit erinnert die Steuerung ans Filterreinigen (*Einstellungen → Zeitpläne → Filter*)

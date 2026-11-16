@@ -12,21 +12,9 @@ def make_icon(size):
     s = size
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    # rounded-square gradient background (blue -> cyan, diagonal)
-    c1 = (37, 99, 235)   # --accent
-    c2 = (6, 182, 212)   # --accent2
-    grad = Image.new("RGBA", (s, s))
-    gd = ImageDraw.Draw(grad)
-    for y in range(s):
-        for_x = y / (s - 1)
-        r = int(c1[0] + (c2[0] - c1[0]) * for_x)
-        g = int(c1[1] + (c2[1] - c1[1]) * for_x)
-        b = int(c1[2] + (c2[2] - c1[2]) * for_x)
-        gd.line([(0, y), (s, y)], fill=(r, g, b, 255))
-    mask = Image.new("L", (s, s), 0)
-    md = ImageDraw.Draw(mask)
-    md.rounded_rectangle([0, 0, s - 1, s - 1], radius=int(s * 0.22), fill=255)
-    img.paste(grad, (0, 0), mask)
+    # flat full-bleed background in the ink colour of the UI: iOS and Android
+    # round the corners themselves, transparent corners would turn black on iOS
+    d.rectangle([0, 0, s, s], fill=(42, 31, 51, 255))
     # white house outline
     w = max(2, int(s * 0.045))
     cx = s / 2
