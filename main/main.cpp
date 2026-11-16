@@ -210,6 +210,11 @@ String hvacFaultText(); // "" when no fault, else "0xXXXX"
 #define HIST_NONE -128
 int8_t hist[HIST_LEN]; // temperature * 2 (celsius), HIST_NONE = no sample
 int8_t hist7[HIST7_LEN];
+// running state next to each sample: 1 bit per 5-minute sample (unit was ON),
+// and the number of ON samples (0..6) per 30-minute slot of the 7-day ring
+uint8_t histOn[(HIST_LEN + 7) / 8];
+uint8_t hist7On[HIST7_LEN];
+uint8_t hist7_oncnt = 0;
 uint16_t hist_head = 0;
 uint16_t hist7_head = 0;
 bool hist_ready = false;
@@ -1417,7 +1422,9 @@ void checkHistory()
     for (uint16_t i = 0; i < HIST7_LEN; i++)
     {
       hist7[i] = HIST_NONE;
+      hist7On[i] = 0;
     }
+    memset(histOn, 0, sizeof(histOn));
     hist_ready = true;
   }
   if (lastHistSample != 0 && millis() - lastHistSample < 300000UL)
@@ -1434,7 +1441,22 @@ void checkHistory()
       hist7_cnt++;
     }
   }
+  bool on = false;
+  if (hp.isConnected())
+  {
+    heatpumpSettings hs = hp.getSettings();
+    on = hs.power != NULL && strcmp(hs.power, "ON") == 0;
+  }
   hist[hist_head] = v;
+  if (on)
+  {
+    histOn[hist_head / 8] |= (uint8_t)(1 << (hist_head % 8));
+    hist7_oncnt++;
+  }
+  else
+  {
+    histOn[hist_head / 8] &= (uint8_t)~(1 << (hist_head % 8));
+  }
   hist_head = (hist_head + 1) % HIST_LEN;
   // every 6th 5-minute tick, push the 30-minute average into the 7-day ring
   hist7_ticks++;
@@ -1449,6 +1471,8 @@ void checkHistory()
     hist7_sum = 0;
     hist7_cnt = 0;
     hist7[hist7_head] = avg;
+    hist7On[hist7_head] = hist7_oncnt;
+    hist7_oncnt = 0;
     hist7_head = (hist7_head + 1) % HIST7_LEN;
   }
 }
@@ -1462,7 +1486,7 @@ void handleApiHistory(AsyncWebServerRequest *request)
   uint16_t len = week ? HIST7_LEN : HIST_LEN;
   uint16_t head = week ? hist7_head : hist_head;
   String json;
-  json.reserve(len * 5 + 32);
+  json.reserve(len * 6 + 48);
   json += F("{\"i\":");
   json += week ? 1800 : 300;
   json += F(",\"d\":\"");
@@ -1477,6 +1501,18 @@ void handleApiHistory(AsyncWebServerRequest *request)
     {
       json += ',';
     }
+  }
+  // one digit per sample: ON samples in that slot (24h: 0/1, 7 days: 0..6)
+  json += F("\",\"on\":\"");
+  for (uint16_t n = 0; n < len; n++)
+  {
+    uint16_t idx = (head + n) % len;
+    uint8_t c = 0;
+    if (hist_ready)
+    {
+      c = week ? hist7On[idx] : ((histOn[idx / 8] >> (idx % 8)) & 1);
+    }
+    json += (char)('0' + (c > 9 ? 9 : c));
   }
   json += F("\"}");
   request->send(200, "application/json", json);
