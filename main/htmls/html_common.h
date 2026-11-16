@@ -805,10 +805,11 @@ const char html_css[] PROGMEM =
         "#histsvg text { font-size: 9px; fill: var(--muted); }"
         "#histsvg text.hv { font-size: 10px; font-weight: 600; fill: var(--text); }"
         ".histmeta { margin-top: 4px; font-size: .75rem; color: var(--muted); }"
-        ".cbig { display: flex; align-items: flex-start; gap: 20px; margin-top: 2px; }"
+        ".cbig { display: flex; align-items: flex-start; gap: 14px; margin-top: 2px; }"
         ".cnum { font-size: min(38vw, 9.4rem); line-height: 1; font-weight: 700; letter-spacing: -.04em; white-space: nowrap; }"
         ".cnum sup { font-size: .3em; font-weight: 300; letter-spacing: 0; vertical-align: top; position: relative; top: .35em; margin-left: .15em; }"
-        ".cside { padding-top: 1.4rem; }"
+        ".cnum small { font-size: .3em; font-weight: 600; letter-spacing: 0; }"
+        ".cside { padding-top: 1.4rem; min-width: 0; }"
         ".ck, .chip .clabel { display: block; font-size: .7rem; font-weight: 400; color: var(--muted); }"
         ".cv { font-size: 1.9rem; font-weight: 600; line-height: 1.05; }"
         /* temperature slider: only the knob takes drags, vertical swipes scroll */
