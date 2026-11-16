@@ -44,6 +44,7 @@ void initOTA();
 void setDefaults();
 boolean initWifi();
 void sendWrappedHTML(AsyncWebServerRequest *request, const String &content);
+void sendWrappedHTML(AsyncWebServerRequest *request, String &&content);
 void handleNotFound(AsyncWebServerRequest *request);
 void handleSaveWifiAndMqtt(AsyncWebServerRequest *request);
 void handleReboot(AsyncWebServerRequest *request);
@@ -89,6 +90,7 @@ struct ScheduleRule
   float temp;         // in the target unit's display scale (sent as TEMP)
   bool offAfter;      // power off when the window ends
   bool active;        // runtime: window currently applied
+  uint8_t retries;    // runtime: failed attempts to deliver the pending start/end
 };
 ScheduleRule schedules[MAX_SCHEDULES];
 uint8_t schedules_count = 0;
@@ -98,7 +100,7 @@ bool loadSchedules();
 bool saveSchedules(const String& schedulesJson);
 bool parseSchedules(const String& json);
 void checkSchedules();
-void scheduleApply(ScheduleRule &rule, bool start);
+bool scheduleApply(ScheduleRule &rule, bool start);
 
 // ad-hoc run: start now in the current mode, auto power-off after a
 // configurable duration (RAM only - a reboot cancels the auto-off)
@@ -167,6 +169,152 @@ static bool apiAuthOk(AsyncWebServerRequest *request);
 static heatpumpSettings hpBaseSettings()
 {
   return hp.isUpdatePending() ? hp.getWantedSettings() : hp.getSettings();
+}
+
+// ---- request guard -------------------------------------------------------
+// The web UI is plain HTTP inside the home network. Two things keep other web
+// sites away from it: requests must name the device by a local name or address
+// (blocks DNS rebinding), and a request that says which page sent it (Origin)
+// must come from a local page too (blocks cross-site requests from the
+// internet). Linked units talk to each other from local origins, so the
+// multi-device panel keeps working.
+static bool ksHostIsLocal(String h)
+{
+  h.trim();
+  h.toLowerCase();
+  if (h.startsWith("["))
+    return true; // IPv6 literal: link-local use only, nothing to rebind to
+  int colon = h.indexOf(':');
+  if (colon >= 0)
+    h = h.substring(0, colon);
+  if (h.length() == 0)
+    return true; // no Host header (HTTP/1.0 tools)
+  // IPv4 literal?
+  int parts[4] = {0, 0, 0, 0};
+  int n = 0;
+  bool numeric = true;
+  for (unsigned int i = 0; i < h.length() && numeric; i++)
+  {
+    char c = h.charAt(i);
+    if (c == '.')
+    {
+      if (++n > 3)
+        numeric = false;
+    }
+    else if (c >= '0' && c <= '9')
+    {
+      parts[n] = parts[n] * 10 + (c - '0');
+      if (parts[n] > 255)
+        numeric = false;
+    }
+    else
+    {
+      numeric = false;
+    }
+  }
+  if (numeric && n == 3)
+  {
+    return parts[0] == 10 || parts[0] == 127 || (parts[0] == 192 && parts[1] == 168) ||
+           (parts[0] == 172 && parts[1] >= 16 && parts[1] <= 31) || (parts[0] == 169 && parts[1] == 254) ||
+           (parts[0] == 100 && parts[1] >= 64 && parts[1] <= 127); // CGNAT range, used by VPN meshes
+  }
+  int dot = h.indexOf('.');
+  if (dot < 0)
+    return true; // plain host name
+  String own = hostname;
+  own.toLowerCase();
+  if (h.substring(0, dot) == own)
+    return true; // <hostname>.<router domain>
+  static const char *const suffixes[] = {".local", ".lan", ".home", ".internal", ".intranet", ".localdomain", ".fritz.box", ".home.arpa", ".box", ".localhost"};
+  for (uint8_t i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); i++)
+  {
+    if (h.endsWith(suffixes[i]))
+      return true;
+  }
+  return false;
+}
+
+static bool ksIsGet(AsyncWebServerRequest *request)
+{
+  return request->method() == AsyncWebRequestMethod::HTTP_GET;
+}
+
+// false (and a 403 sent) when the request does not come from the local network's own pages
+static bool ksRequestOk(AsyncWebServerRequest *request)
+{
+  if (captive)
+    return true; // setup portal: every host name is redirected to us on purpose
+  bool ok = true;
+  if (request->hasHeader("Host"))
+    ok = ksHostIsLocal(request->getHeader("Host")->value());
+  if (ok && request->hasHeader("Origin"))
+  {
+    String o = request->getHeader("Origin")->value();
+    int p = o.indexOf("://");
+    if (p >= 0)
+      ok = ksHostIsLocal(o.substring(p + 3));
+    else
+      ok = ksIsGet(request); // "null" origin (sandboxed page, file): read-only
+  }
+  if (!ok)
+  {
+    request->send(403, "text/plain", String(F("Forbidden: open this device by its IP address or local name.")));
+  }
+  return ok;
+}
+
+// session token: random per boot and per logout, never a fixed value
+static String ks_session_token;
+static void ksNewSessionToken()
+{
+  char buf[33];
+  for (uint8_t i = 0; i < 4; i++)
+  {
+#ifdef ESP32
+    uint32_t r = esp_random();
+#else
+    uint32_t r = ESP.random();
+#endif
+    snprintf(buf + i * 8, 9, "%08x", (unsigned int)r);
+  }
+  ks_session_token = buf;
+}
+// failed logins are slowed down: 2, 4, 8 ... 32 seconds
+static uint8_t ks_login_fails = 0;
+static unsigned long ks_login_lock_ms = 0;
+static unsigned long ks_login_lock_start = 0;
+
+// reduce a host name to what DNS, HTML and JSON all take as is
+static String ksCleanHostname(const String &in)
+{
+  String out;
+  for (unsigned int i = 0; i < in.length() && out.length() < 32; i++)
+  {
+    char c = in.charAt(i);
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_')
+      out += c;
+  }
+  return out;
+}
+
+static String ksHtmlEscape(const String &in)
+{
+  String out;
+  out.reserve(in.length() + 8);
+  for (unsigned int i = 0; i < in.length(); i++)
+  {
+    char c = in.charAt(i);
+    switch (c)
+    {
+    case '&': out += F("&amp;"); break;
+    case '<': out += F("&lt;"); break;
+    case '>': out += F("&gt;"); break;
+    case '"': out += F("&quot;"); break;
+    case '\'': out += F("&#39;"); break;
+    default: out += c;
+    }
+  }
+  return out;
 }
 
 // CN105 diagnosis (RX/TX log): RAM ring with the last raw packets in both
@@ -251,6 +399,8 @@ uint16_t clean_minutes = 15;          // 5..60
 unsigned long cleanEndMillis = 0;     // 0 = inactive (RAM only, reboot cancels)
 char clean_prev_power[8] = "";
 char clean_prev_mode[9] = "";
+char clean_snap_mode[9] = "";         // mode/fan before the clean run, restored at its end
+char clean_snap_fan[8] = "";
 unsigned long lastCleanCheck = 0;
 bool loadClean();
 bool saveClean();
@@ -1156,21 +1306,6 @@ bool saveAdhoc(uint16_t minutes)
   return true;
 }
 
-static void adhocPower(bool on)
-{
-  if (!hp.isConnected())
-    return;
-  heatpumpSettings settings = hpBaseSettings();
-  settings.power = on ? "ON" : "OFF";
-  hp.setSettings(settings);
-  if (hp.getSettings() == hp.getWantedSettings())
-  {
-    return; // nothing to send
-  }
-  requestHpUpdate = true;
-  requestHpUpdateTime = millis() + 10;
-}
-
 static void adhocSend(heatpumpSettings &settings)
 {
   hp.setSettings(settings);
@@ -1187,6 +1322,7 @@ static void adhocStart()
 {
   if (!hp.isConnected())
     return;
+  cleanEndMillis = 0; // the unit is in use again: no power-off from a clean run
   heatpumpSettings settings = hpBaseSettings();
   if (!adhoc_prev.valid) // a restart of a running ad-hoc keeps the first snapshot
   {
@@ -1230,11 +1366,29 @@ static void adhocStop()
 
 void checkAdhoc()
 {
-  if (adhocEndMillis != 0 && (long)(millis() - adhocEndMillis) >= 0)
+  if (adhocEndMillis == 0)
+    return;
+  if ((long)(millis() - adhocEndMillis) >= 0)
   {
     adhocEndMillis = 0;
     ESP_LOGI(TAG, "Ad-hoc run finished, power off");
     adhocStop();
+    return;
+  }
+  // switched off by hand (panel, IR remote) during the run: the run is over.
+  // Otherwise the stale timer would switch off a unit that was turned on again.
+  static unsigned long lastAdhocCheck = 0;
+  if (millis() - lastAdhocCheck < 2000UL)
+    return;
+  lastAdhocCheck = millis();
+  if (!hp.isConnected())
+    return;
+  heatpumpSettings base = hpBaseSettings();
+  if (base.power != NULL && strcmp(base.power, "OFF") == 0)
+  {
+    adhocEndMillis = 0;
+    ESP_LOGI(TAG, "Ad-hoc run ended by a manual power-off");
+    adhocStop(); // stays off, puts fan and vanes back
   }
 }
 
@@ -1309,6 +1463,7 @@ void applyNight()
 {
   if (!hp.isConnected() || night_active)
     return;
+  cleanEndMillis = 0; // the unit is in use again: no power-off from a clean run
   heatpumpSettings settings = hpBaseSettings();
   // snapshot for restore
   strlcpy(night_prev.power, settings.power != NULL ? settings.power : "ON", sizeof(night_prev.power));
@@ -1345,7 +1500,10 @@ void endNight()
   heatpumpSettings settings = hpBaseSettings();
   if (night_prev.valid)
   {
-    settings.power = night_prev.power;
+    // never switch on a unit that was turned off during the night (panel, IR
+    // remote, schedule or ad-hoc end): only a snapshot of "OFF" is restored
+    if (strcmp(night_prev.power, "OFF") == 0)
+      settings.power = "OFF";
     if (night_prev.mode[0] != '\0')
       settings.mode = night_prev.mode;
     if (night_prev.temp > 0)
@@ -1391,18 +1549,25 @@ void checkNight()
   localtime_r(&now, &ti);
   uint16_t mins = (uint16_t)(ti.tm_hour * 60 + ti.tm_min);
   bool inWindow = nightInWindow(mins);
+  // act on the window edge only: a night mode started by hand outside the
+  // window must not be ended by the next check 20 seconds later
+  static bool wasInWindow = false;
+  bool windowClosed = wasInWindow && !inWindow;
+  wasInWindow = inWindow;
   if (!inWindow)
   {
     night_manual_off = false; // window closed: arm the automatic again
-    if (night_active)
+    if (night_active && windowClosed)
     {
       endNight(); // window ended (also ends a manual run at the window edge)
     }
     return;
   }
-  if (night_cfg.autoEn && !night_active && !night_manual_off && hp.isConnected())
+  // a self-clean run keeps the unit "on" in fan mode: that is not a running
+  // unit the night profile should take over
+  if (night_cfg.autoEn && !night_active && !night_manual_off && hp.isConnected() && cleanEndMillis == 0)
   {
-    heatpumpSettings settings = hp.getSettings();
+    heatpumpSettings settings = hpBaseSettings();
     // only auto-apply while the unit is actually running
     if (settings.power != NULL && strcmp(settings.power, "ON") == 0)
     {
@@ -1495,7 +1660,7 @@ void handleApiHistory(AsyncWebServerRequest *request)
     int8_t v = hist_ready ? buf[(head + n) % len] : HIST_NONE;
     if (v != HIST_NONE)
     {
-      json += String(v / 2.0f, 1);
+      json += String(convertCelsiusToLocalUnit(v / 2.0f, useFahrenheit), 1); // same scale as /api/status
     }
     if (n < len - 1)
     {
@@ -1741,6 +1906,8 @@ static void cleanStart()
   if (!hp.isConnected())
     return;
   heatpumpSettings s = hpBaseSettings();
+  strlcpy(clean_snap_mode, s.mode != NULL ? s.mode : "", sizeof(clean_snap_mode));
+  strlcpy(clean_snap_fan, s.fan != NULL ? s.fan : "", sizeof(clean_snap_fan));
   s.power = "ON";
   s.mode = "FAN";
   s.fan = supportQuietMode ? "QUIET" : "1";
@@ -1750,6 +1917,22 @@ static void cleanStart()
   cleanEndMillis = millis() + (unsigned long)clean_minutes * 60000UL;
   if (cleanEndMillis == 0)
     cleanEndMillis = 1; // avoid the 'inactive' sentinel on wrap
+}
+
+// end of a clean run: power off and put back the mode and fan speed from
+// before, so the next start cools again instead of fanning at the lowest speed
+static void cleanFinish()
+{
+  cleanEndMillis = 0;
+  if (!hp.isConnected())
+    return;
+  heatpumpSettings s = hpBaseSettings();
+  s.power = "OFF";
+  if (clean_snap_mode[0] != '\0')
+    s.mode = clean_snap_mode;
+  if (clean_snap_fan[0] != '\0')
+    s.fan = clean_snap_fan;
+  adhocSend(s);
 }
 
 void checkClean()
@@ -1769,12 +1952,17 @@ void checkClean()
     // drying finished: now the unit goes off for real; the FAN mode of this
     // transition keeps the auto-trigger below from re-arming
     ESP_LOGI(TAG, "Clean run finished, power off");
-    cleanEndMillis = 0;
-    adhocPower(false);
+    cleanFinish();
   }
   else if (cleanEndMillis != 0 && isOff && wasOn)
   {
     // switched off while drying: respect it and stay off
+    cleanEndMillis = 0;
+  }
+  else if (cleanEndMillis != 0 && !hp.isUpdatePending() && strcmp(pw, "ON") == 0 && md[0] != '\0' && strcmp(md, "FAN") != 0)
+  {
+    // the mode was changed during drying: the unit is in use again, so the
+    // clean timer must not switch it off later
     cleanEndMillis = 0;
   }
   else if (cleanEndMillis == 0 && clean_auto && isOff && wasOn &&
@@ -1794,6 +1982,13 @@ void checkHoliday()
   lastHolidayCheck = millis();
   if (!holiday_on)
   {
+    if (frost_active && hp.isConnected())
+    {
+      // holiday mode was ended while the frost guard was heating: stop it
+      heatpumpSettings off = hpBaseSettings();
+      off.power = "OFF";
+      nightSendSettings(off);
+    }
     frost_active = false;
     return;
   }
@@ -1859,16 +2054,18 @@ void handleApiHoliday(AsyncWebServerRequest *request)
   request->send(200, "application/json", json);
 }
 
-void scheduleApply(ScheduleRule &rule, bool start)
+// true when the command was delivered (to the heat pump or the remote unit)
+bool scheduleApply(ScheduleRule &rule, bool start)
 {
   if (rule.addr[0] == '\0')
   {
     // this unit: talk to the heat pump directly
     if (!hp.isConnected())
-      return;
+      return false;
     heatpumpSettings settings = hpBaseSettings();
     if (start)
     {
+      cleanEndMillis = 0; // the unit is in use again: no power-off from a clean run
       settings.power = "ON";
       settings.mode = rule.mode;
       settings.temperature = convertLocalUnitToCelsius(rule.temp, useFahrenheit);
@@ -1910,8 +2107,11 @@ void scheduleApply(ScheduleRule &rule, bool start)
       int code = http.POST(body);
       ESP_LOGI(TAG, "Schedule -> %s (%s): HTTP %d", rule.addr, start ? "start" : "end", code);
       http.end();
+      return code == 200;
     }
+    return false;
   }
+  return true;
 }
 
 void checkSchedules()
@@ -1929,6 +2129,7 @@ void checkSchedules()
       if (schedules[i].active)
       {
         schedules[i].active = false;
+        schedules[i].retries = 0;
         if (schedules[i].offAfter)
         {
           scheduleApply(schedules[i], false);
@@ -1962,7 +2163,14 @@ void checkSchedules()
     {
       if (r.anchorMid == 0)
         continue;
-      long days = (long)((now - r.anchorMid) / 86400);
+      // count calendar days between local midnights; rounding absorbs the
+      // 23/25-hour days around a daylight-saving change
+      struct tm tmid = ti;
+      tmid.tm_hour = 0;
+      tmid.tm_min = 0;
+      tmid.tm_sec = 0;
+      tmid.tm_isdst = -1;
+      long days = lround(difftime(mktime(&tmid), r.anchorMid) / 86400.0);
       dayOk = days >= 0 && (days % r.interval) == 0;
     }
     else
@@ -1970,17 +2178,22 @@ void checkSchedules()
       dayOk = (r.daysMask & (1 << wd)) != 0;
     }
     bool inWindow = dayOk && mins >= r.fromMin && mins < r.toMin;
+    // a start/end that could not be delivered (unit not connected, remote
+    // unit unreachable) is retried on the next ticks, for about five minutes
     if (inWindow && !r.active)
     {
-      r.active = true;
-      scheduleApply(r, true);
+      if (scheduleApply(r, true) || ++r.retries >= 15)
+      {
+        r.active = true;
+        r.retries = 0;
+      }
     }
     else if (!inWindow && r.active)
     {
-      r.active = false;
-      if (r.offAfter)
+      if (!r.offAfter || scheduleApply(r, false) || ++r.retries >= 15)
       {
-        scheduleApply(r, false);
+        r.active = false;
+        r.retries = 0;
       }
     }
   }
@@ -2070,6 +2283,7 @@ void saveWifi(String apSsid, const String& apPwd, String hostName, const String&
   // Allocate document capacity.
   const size_t capacity = JSON_OBJECT_SIZE(8) + 130 + 4*(16 /*ipv4 addr*/ + 15 /*max key size*/);
   DynamicJsonDocument doc(capacity);
+  hostName = ksCleanHostname(hostName); // letters, digits, - and _ only
   if (hostName.isEmpty())
   {
     hostName = hostname;
@@ -2372,7 +2586,14 @@ boolean initWifi()
   if (!connectWifiSuccess)
   {
     // Set AP password when falling back to AP on fail
-    WiFi.softAP(hostname.c_str(), login_password.isEmpty() ? hostname.c_str() : login_password.c_str());
+    // never the device name itself (it is broadcast as the network name): use
+    // the login password, else the password of the configured home WiFi
+    const char *fallbackPwd = hostname.c_str();
+    if (login_password.length() >= 8)
+      fallbackPwd = login_password.c_str();
+    else if (ap_pwd.length() >= 8)
+      fallbackPwd = ap_pwd.c_str();
+    WiFi.softAP(hostname.c_str(), fallbackPwd);
   }
   else
   {
@@ -2392,6 +2613,14 @@ boolean initWifi()
 
 // Handler webserver response
 void sendWrappedHTML(AsyncWebServerRequest *request, const String &content)
+{
+  String copy(content);
+  sendWrappedHTML(request, std::move(copy));
+}
+
+// takes over the page body instead of copying it: on the ESP8266 the copy was
+// the largest single allocation of a page build
+void sendWrappedHTML(AsyncWebServerRequest *request, String &&content)
 {
   if (content.isEmpty())
   {
@@ -2438,7 +2667,7 @@ void sendWrappedHTML(AsyncWebServerRequest *request, const String &content)
   chunkFoot = String();
   chunkHead = std::move(response);
   chunkFoot = std::move(footer);
-  chunkBody = content;
+  chunkBody = std::move(content);
   if (chunkHead.length() != lenH || chunkBody.length() != lenB || chunkFoot.length() != lenF)
   {
     // a copy failed on a tight heap: never stream a truncated page (a page
@@ -2561,7 +2790,7 @@ void handleReboot(AsyncWebServerRequest *request)
   String initRebootPage = FPSTR(html_init_reboot);
   // localize
   initRebootPage.replace(F("_TXT_INIT_REBOOT_"), translatedWord(FL_(txt_init_reboot)));
-  sendWrappedHTML(request, initRebootPage);
+  sendWrappedHTML(request, std::move(initRebootPage));
   sendRebootRequest(3); // Reboot after 3 seconds
 }
 
@@ -2570,7 +2799,7 @@ void handleRoot(AsyncWebServerRequest *request)
   if (!checkLogin(request)) {
       return;
   }
-  if (request->hasArg("REBOOT"))
+  if (request->hasArg("REBOOT") && !ksIsGet(request))
   {
     String rebootPage = FPSTR(html_page_reboot);
     String countDown = FPSTR(count_down_script);
@@ -2660,7 +2889,7 @@ void handleSetup(AsyncWebServerRequest *request)
   if (!checkLogin(request)) {
       return;
   }
-  if (request->hasArg("RESET"))
+  if (request->hasArg("RESET") && !ksIsGet(request))
   {
     String resetPage = FPSTR(html_page_reset);
     // localize
@@ -2688,7 +2917,7 @@ void handleSetup(AsyncWebServerRequest *request)
     menuSetupPage.replace(F("_TXT_RESET_"), translatedWord(FL_(txt_reset)));
     menuSetupPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
     menuSetupPage.replace(F("_SHOW_LOGOUT_"), (String)(login_password.length() > 0));
-    sendWrappedHTML(request, menuSetupPage);
+    sendWrappedHTML(request, std::move(menuSetupPage));
   }
 }
 
@@ -2697,7 +2926,7 @@ void handleOthers(AsyncWebServerRequest *request)
   if (!checkLogin(request)) {
       return;
   }
-  if (request->hasArg("save"))
+  if (request->hasArg("save") && !ksIsGet(request))
   {
     saveOthers(request->arg("HAA"), request->arg("haat"), request->arg("DebugPckts"), request->arg("DebugLogs"), request->arg("web_p"), request->arg("tx_pin"), request->arg("rx_pin"), request->arg("tz"), request->arg("ntp"));
     String saveRebootPage = FPSTR(html_page_save_reboot);
@@ -2770,7 +2999,7 @@ void handleOthers(AsyncWebServerRequest *request)
     {
       othersPage.replace(F("_WEB_ON_"), F("selected"));
     }
-    sendWrappedHTML(request, othersPage);
+    sendWrappedHTML(request, std::move(othersPage));
   }
 }
 
@@ -2779,7 +3008,7 @@ void handleMqtt(AsyncWebServerRequest *request)
   if (!checkLogin(request)) {
       return;
   }
-  if (request->hasArg("save"))
+  if (request->hasArg("save") && !ksIsGet(request))
   {
     saveMqtt(request->arg("fn"), request->arg("mh"), request->arg("ml"), request->arg("mu"), request->arg("mp"), request->arg("mt"), request->arg("mrcc"));
     String saveRebootPage = FPSTR(html_page_save_reboot);
@@ -2816,7 +3045,7 @@ void handleMqtt(AsyncWebServerRequest *request)
     mqttPage.replace(F("_MQTT_PASSWORD_"), mqtt_password);
     mqttPage.replace(F("_MQTT_TOPIC_"), mqtt_topic);
     mqttPage.replace(F("_MQTT_ROOT_CA_CERT_"), mqtt_root_ca_cert);
-    sendWrappedHTML(request, mqttPage);
+    sendWrappedHTML(request, std::move(mqttPage));
   }
 }
 
@@ -2825,7 +3054,7 @@ void handleUnit(AsyncWebServerRequest *request)
   if (!checkLogin(request)) {
       return;
   }
-  if (request->hasArg("save"))
+  if (request->hasArg("save") && !ksIsGet(request))
   {
     String loginPassword = request->arg("lpw");
     String confirmLoginPassword = request->arg("lpwc");
@@ -2908,7 +3137,7 @@ void handleUnit(AsyncWebServerRequest *request)
       unitPage.replace(F("_MDF_NONQUIET_"), F("selected"));
     // login password
     unitPage.replace(F("_LOGIN_PASSWORD_"), login_password);
-    sendWrappedHTML(request, unitPage);
+    sendWrappedHTML(request, std::move(unitPage));
   }
 }
 
@@ -2917,7 +3146,7 @@ void handleWifi(AsyncWebServerRequest *request)
   if (!checkLogin(request)) {
       return;
   }
-  if (request->hasArg("save"))
+  if (request->hasArg("save") && !ksIsGet(request))
   {
     String ssid = request->arg("ssid");
     if (ssid.isEmpty() and request->hasArg("network"))
@@ -2983,7 +3212,7 @@ void handleWifi(AsyncWebServerRequest *request)
     wifiPage += wifiPageHtml;
     wifiPageHtml = "";
 
-    sendWrappedHTML(request, wifiPage);
+    sendWrappedHTML(request, std::move(wifiPage));
   }
 }
 
@@ -3069,7 +3298,7 @@ void handleStatus(AsyncWebServerRequest *request)
   statusPage.replace(F("_FREE_HEAP_"), heap);
   statusPage.replace(F("_CURRENT_TIME_"), F("<font color='blue'><b>") + getCurrentTime() + F("</b></font>"));
   statusPage.replace(F("_BOOT_TIME_"), F("<font color='orange'><b>") + getUpTime() + F("</b></font>"));
-  sendWrappedHTML(request, statusPage);
+  sendWrappedHTML(request, std::move(statusPage));
 }
 
 // JSON API for the multi-device web panel. Auth mirrors the web pages: only
@@ -3077,6 +3306,15 @@ void handleStatus(AsyncWebServerRequest *request)
 // password can only be controlled from their own origin).
 static bool apiAuthOk(AsyncWebServerRequest *request)
 {
+  if (!ksRequestOk(request))
+    return false;
+  // reading is GET, changing is POST: a link or image tag on a foreign page
+  // (which sends no Origin) can therefore never change anything
+  if (ksIsGet(request) && request->args() > 0 && !(request->args() == 1 && request->hasArg(F("r"))))
+  {
+    request->send(405, "application/json", String(F("{\"err\":\"post\"}")));
+    return false;
+  }
   if (login_password.length() > 0 && !is_authenticated(request))
   {
     request->send(401, "application/json", String(F("{\"err\":\"auth\"}")));
@@ -3101,7 +3339,7 @@ void handleApiStatus(AsyncWebServerRequest *request)
     return;
   heatpumpSettings s = hpBaseSettings();
   String json;
-  json.reserve(384);
+  json.reserve(480);
   json += F("{\"name\":\"");
   json += hostname;
   json += F("\",\"connected\":");
@@ -3293,7 +3531,7 @@ void handleApiAdhoc(AsyncWebServerRequest *request)
   if (request->hasArg(F("set")))
   {
     uint16_t m = (uint16_t)request->arg(F("set")).toInt();
-    if (request->hasArg(F("fan")) || request->hasArg(F("vane")) || request->hasArg(F("wv")))
+    if (m >= 5 && m <= 720 && (request->hasArg(F("fan")) || request->hasArg(F("vane")) || request->hasArg(F("wv"))))
     {
       adhocSetProfile(request->arg(F("fan")).c_str(), request->arg(F("vane")).c_str(), request->arg(F("wv")).c_str());
     }
@@ -3309,8 +3547,11 @@ void handleApiAdhoc(AsyncWebServerRequest *request)
   }
   if (request->hasArg(F("stop")))
   {
-    adhocEndMillis = 0;
-    adhocStop();
+    if (adhocEndMillis != 0) // a stale tab must not switch off a unit that runs normally
+    {
+      adhocEndMillis = 0;
+      adhocStop();
+    }
     request->send(200, "application/json", String(F("{\"ok\":true,\"left\":0}")));
     return;
   }
@@ -3378,8 +3619,7 @@ void handleApiClean(AsyncWebServerRequest *request)
   {
     if (cleanEndMillis != 0)
     {
-      cleanEndMillis = 0;
-      adhocPower(false);
+      cleanFinish();
     }
     request->send(200, "application/json", String(F("{\"ok\":true,\"left\":0}")));
     return;
@@ -3628,7 +3868,7 @@ void handleTimers(AsyncWebServerRequest *request)
   timersPage += FPSTR(html_page_timers);
   timersPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
   timersPage.replace(F("_KS_VERSION_"), ks_version);
-  sendWrappedHTML(request, timersPage);
+  sendWrappedHTML(request, std::move(timersPage));
 }
 
 void handleDevicesPage(AsyncWebServerRequest *request)
@@ -3641,7 +3881,7 @@ void handleDevicesPage(AsyncWebServerRequest *request)
   devicesPage += FPSTR(html_page_devices);
   devicesPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
   devicesPage.replace(F("_KS_VERSION_"), ks_version);
-  sendWrappedHTML(request, devicesPage);
+  sendWrappedHTML(request, std::move(devicesPage));
 }
 
 void handleBackupPage(AsyncWebServerRequest *request)
@@ -3653,7 +3893,7 @@ void handleBackupPage(AsyncWebServerRequest *request)
   String backupPage = FPSTR(backup_script);
   backupPage += FPSTR(html_page_backup);
   backupPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
-  sendWrappedHTML(request, backupPage);
+  sendWrappedHTML(request, std::move(backupPage));
 }
 
 void handleCn105Page(AsyncWebServerRequest *request)
@@ -3665,7 +3905,7 @@ void handleCn105Page(AsyncWebServerRequest *request)
   String cnPage = FPSTR(cn105_script);
   cnPage += FPSTR(html_page_cn105);
   cnPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
-  sendWrappedHTML(request, cnPage);
+  sendWrappedHTML(request, std::move(cnPage));
 }
 
 void handleApiCn105(AsyncWebServerRequest *request)
@@ -3880,7 +4120,8 @@ static void sendStaticGzP(AsyncWebServerRequest *request, const String& contentT
 {
   AsyncWebServerResponse *response = request->beginResponse_P(200, contentType, data, len);
   response->addHeader(F("Content-Encoding"), F("gzip"));
-  response->addHeader(F("Cache-Control"), F("max-age=3600"));
+  // the URLs carry ?v=<version>, so a cached copy never goes stale
+  response->addHeader(F("Cache-Control"), F("max-age=31536000, immutable"));
   request->send(response);
 }
 #endif
@@ -4050,7 +4291,7 @@ void handleControl(AsyncWebServerRequest *request)
   }
 
   heatpumpSettings settings = hpBaseSettings();
-  if (hp.isConnected())
+  if (hp.isConnected() && !ksIsGet(request))
   {
     settings = change_states(request, settings);
   }
@@ -4098,7 +4339,7 @@ void handleControl(AsyncWebServerRequest *request)
   controlPage += htmlControlPage;
   htmlControlPage = "";
 
-  sendWrappedHTML(request, controlPage);
+  sendWrappedHTML(request, std::move(controlPage));
   // We need to send the page content in chunks to overcome
   // a limitation on the maximum size we can send at one
   // time (approx 6k).
@@ -4167,7 +4408,7 @@ void handleMetrics(AsyncWebServerRequest *request)
   metrics.replace(F("_MODE_"), hpmode);
   metrics.replace(F("_OPER_"), (String)currentStatus.operating);
   metrics.replace(F("_COMPFREQ_"), (String)currentStatus.compressorFrequency);
-  sendWrappedHTML(request, metrics);
+  sendWrappedHTML(request, std::move(metrics));
 }
 #endif
 
@@ -4194,14 +4435,19 @@ void handleLogin(AsyncWebServerRequest *request)
   {
     if (request->hasArg("LOGOUT"))
     {
-      // logout
+      // logout: the old token is void for every browser
       loginSuccess = false;
+      ksNewSessionToken();
     }
     if (request->hasArg("USERNAME") && request->hasArg("PASSWORD"))
     {
-      if (request->arg("USERNAME") == login_username && request->arg("PASSWORD") == login_password)
+      bool locked = ks_login_fails > 0 && (millis() - ks_login_lock_start) < ks_login_lock_ms;
+      if (!locked && !ksIsGet(request) && request->arg("USERNAME") == login_username && request->arg("PASSWORD") == login_password)
       {
         loginSuccess = true;
+        ks_login_fails = 0;
+        if (ks_session_token.length() != 32)
+          ksNewSessionToken();
         msg = F("<b><font color='red'>");
         msg += translatedWord(FL_(txt_login_sucess));
         msg += F("</font></b>");
@@ -4217,7 +4463,14 @@ void handleLogin(AsyncWebServerRequest *request)
         msg = F("<b><font color='red'>");
         msg += translatedWord(FL_(txt_login_fail));
         msg += F("</font></b>");
-        // Log in Failed;
+        // Log in Failed: each further attempt has to wait longer
+        if (!locked)
+        {
+          if (ks_login_fails < 5)
+            ks_login_fails++;
+          ks_login_lock_ms = 1000UL << ks_login_fails;
+          ks_login_lock_start = millis();
+        }
       }
     }
   }
@@ -4254,12 +4507,12 @@ void handleLogin(AsyncWebServerRequest *request)
   AsyncWebServerResponse *response = request->beginResponse(200, "text/html", toSend);
   if (loginSuccess)
   {
-    response->addHeader("Set-Cookie", "M2MSESSIONID=1");
+    response->addHeader("Set-Cookie", String(F("M2MSESSIONID=")) + ks_session_token + F("; Path=/; HttpOnly; SameSite=Lax"));
     response->addHeader("Cache-Control", "no-cache");
   }
   else
   {
-    response->addHeader("Set-Cookie", "M2MSESSIONID=0");
+    response->addHeader("Set-Cookie", "M2MSESSIONID=0; Path=/; HttpOnly; SameSite=Lax");
     response->addHeader("Cache-Control", "no-cache");
   }
   request->send(response);
@@ -4281,11 +4534,34 @@ void handleUpgrade(AsyncWebServerRequest *request)
   upgradePage.replace(F("_TXT_UPGRADE_START_"), translatedWord(FL_(txt_upgrade_start)));
   upgradePage.replace(F("_KS_VERSION_"), ks_version);
 
-  sendWrappedHTML(request, upgradePage);
+  sendWrappedHTML(request, std::move(upgradePage));
+}
+
+// firmware may only be uploaded by a logged-in user from a local page
+static bool ksUploadAllowed(AsyncWebServerRequest *request, bool respond)
+{
+  if (captive)
+    return true; // first-time setup
+  bool ok = true;
+  if (request->hasHeader("Host"))
+    ok = ksHostIsLocal(request->getHeader("Host")->value());
+  if (ok && request->hasHeader("Origin"))
+  {
+    String o = request->getHeader("Origin")->value();
+    int p = o.indexOf("://");
+    ok = p >= 0 && ksHostIsLocal(o.substring(p + 3));
+  }
+  if (ok && login_password.length() > 0 && !is_authenticated(request))
+    ok = false;
+  if (!ok && respond)
+    request->send(403, "text/plain", String(F("Forbidden")));
+  return ok;
 }
 
 void handleUploadDone(AsyncWebServerRequest *request)
 {
+  if (!ksUploadAllowed(request, true))
+    return;
   ESP_LOGD(TAG, "HTTP: Firmware upload done");
   bool restartflag = false;
   String uploadDonePage = FPSTR(html_page_upload);
@@ -4365,13 +4641,17 @@ void handleUploadDone(AsyncWebServerRequest *request)
   }
   else
   {
-    sendWrappedHTML(request, uploadDonePage);
+    sendWrappedHTML(request, std::move(uploadDonePage));
   }
 }
 
 void handleUploadLoop(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final)
 {
   // Based on https://github.com/lbernstone/asyncUpdate/blob/master/AsyncUpdate.ino
+  if (!ksUploadAllowed(request, false))
+  {
+    return; // not written anywhere; handleUploadDone answers 403
+  }
   if (uploaderror)
   {
     Update.end();
@@ -4474,6 +4754,11 @@ heatpumpSettings change_states(AsyncWebServerRequest *request, heatpumpSettings 
   if (request->hasArg(F("TEMP")))
   {
     float new_temp = convertLocalUnitToCelsius(request->arg(F("TEMP")).toFloat(), useFahrenheit);
+    // never pass a value outside the unit's range on (garbage would end up as 31 degrees)
+    if (new_temp < min_temp)
+      new_temp = min_temp;
+    if (new_temp > max_temp)
+      new_temp = max_temp;
     if (new_temp != settings.temperature)
     {
       settings.temperature = new_temp;
@@ -4665,27 +4950,27 @@ void hpStatusChanged(heatpumpStatus currentStatus)
   float temperature = convertCelsiusToLocalUnit(currentSettings.temperature, useFahrenheit);
   rootInfo[getEntityTag(ENT_ROOM_TEMPERATURE)] = roomTemperature;
   rootInfo["temperature"] = temperature;
-  events.send(String(roomTemperature).c_str(), "room_temperature", millis(), 50); // send data to browser
-  events.send(String(temperature).c_str(), "temperature", millis(), 60);
+  events.send(String(roomTemperature).c_str(), "room_temperature", millis(), 5000); // send data to browser
+  events.send(String(temperature).c_str(), "temperature", millis(), 5000);
   if (!(String(currentSettings.fan).isEmpty())) // null may crash with multitask
   {
     rootInfo["fan"] = getFanModeFromHp(currentSettings.fan);
-    events.send(currentSettings.fan, "fan", millis(), 70);
+    events.send(currentSettings.fan, "fan", millis(), 5000);
   }
   if (!(String(currentSettings.vane).isEmpty()))
   {
     rootInfo["vane"] = currentSettings.vane;
-    events.send(currentSettings.vane, "vane", millis(), 80);
+    events.send(currentSettings.vane, "vane", millis(), 5000);
   }
   if (!(String(currentSettings.wideVane).isEmpty()))
   {
     rootInfo["wideVane"] = currentSettings.wideVane;
-    events.send(currentSettings.wideVane, "wideVane", millis(), 90);
+    events.send(currentSettings.wideVane, "wideVane", millis(), 5000);
   }
   rootInfo["mode"] = hpGetMode(currentSettings);
   rootInfo["action"] = hpGetAction(currentStatus, currentSettings);
-  events.send(currentSettings.mode, "mode", millis(), 100);
-  events.send(currentSettings.power, "power", millis(), 110);
+  events.send(currentSettings.mode, "mode", millis(), 5000);
+  events.send(currentSettings.power, "power", millis(), 5000);
   rootInfo[getEntityTag(ENT_COMPR_FRQ)] = currentStatus.compressorFrequency;
   if (mqttClient != nullptr && mqttClient->connected())
   {
@@ -4836,17 +5121,17 @@ void mqttCallback(const char *topic, const uint8_t *payload, const unsigned int 
         update = true;
     } else if (modeUpper == "ON") {
         // Set temp and mode
-        heatpumpSettings currentSettings = hp.getSettings();
+        // build on the pending command, if any, so a mode or temperature sent
+        // just before is not reverted
+        heatpumpSettings currentSettings = hpBaseSettings();
         hp.setModeSetting(currentSettings.mode);
         rootInfo["mode"] = hpGetMode(currentSettings);
-        //
-        float temperature_c = convertLocalUnitToCelsius(currentSettings.temperature, useFahrenheit);
+        // the library works in Celsius
+        float temperature_c = currentSettings.temperature;
         if (temperature_c < min_temp || temperature_c > max_temp) {
             temperature_c = 23;
-            rootInfo["temperature"] = convertCelsiusToLocalUnit(temperature_c, useFahrenheit);
-        } else {
-            rootInfo["temperature"] = temperature_c;
         }
+        rootInfo["temperature"] = convertCelsiusToLocalUnit(temperature_c, useFahrenheit);
         hp.setTemperature(temperature_c);
         hp.setPowerSetting(modeUpper.c_str());
         hpSendLocalState();
@@ -4911,7 +5196,8 @@ void mqttCallback(const char *topic, const uint8_t *payload, const unsigned int 
   {
     float temperature = strtof(message, NULL);
     // add to fix HP turn off after change temperature
-    heatpumpSettings currentSettings = hp.getSettings();
+    // build on the pending command, if any: a power-on sent a moment ago must survive
+    heatpumpSettings currentSettings = hpBaseSettings();
     hp.setPowerSetting(currentSettings.power);
     hp.setModeSetting(currentSettings.mode);
     //
@@ -5542,7 +5828,7 @@ bool connectWifi()
     WiFi.begin(ap_ssid.c_str(), ap_pwd.c_str());
     ESP_LOGD(TAG, "Connected to %s", ap_ssid.c_str());
     wifi_timeout = millis() + 30000;
-    while (WiFi.status() != WL_CONNECTED && millis() < wifi_timeout)
+    while (WiFi.status() != WL_CONNECTED && (long)(millis() - wifi_timeout) < 0)
     {
       ESP_LOGD(TAG, ".");
       // Serial.print(WiFi.status());
@@ -5662,7 +5948,7 @@ bool is_authenticated(AsyncWebServerRequest *request)
   {
     // Found cookie;
     String cookie = String(request->getHeader("Cookie")->value().c_str());
-    if (cookie.indexOf("M2MSESSIONID=1") != -1)
+    if (ks_session_token.length() == 32 && cookie.indexOf(String(F("M2MSESSIONID=")) + ks_session_token) != -1)
     {
       // Authentication Successful
       return true;
@@ -5690,6 +5976,8 @@ void redirectLoginPage(AsyncWebServerRequest *request)
 
 bool checkLogin(AsyncWebServerRequest *request)
 {
+  if (!ksRequestOk(request))
+    return false;
   if (!is_authenticated(request) && login_password.length() > 0)
   {
     redirectLoginPage(request);
@@ -5714,7 +6002,7 @@ void loop()
     // ESP_LOGD(TAG, "Reset wifi connect timeout");
     wifi_timeout = millis() + WIFI_RETRY_INTERVAL_MS;
   }
-  else if (wifi_config and millis() > wifi_timeout)
+  else if (wifi_config and (long)(millis() - (wifi_timeout)) > 0)
   {
     ESP_LOGD(TAG, "Wifi connect timeout, restart device now");
     ESP.restart();
@@ -5755,7 +6043,7 @@ void loop()
       hp.sync();
     }
     // check mqtt status and retry
-    if (wifiConnected and (!mqtt_connected || !mqttClient->connected()) and millis() > mqtt_reconnect_timeout) // retry to connect mqtt
+    if (wifiConnected and (!mqtt_connected || !mqttClient->connected()) and (long)(millis() - (mqtt_reconnect_timeout)) > 0) // retry to connect mqtt
     {
       mqtt_reconnect_timeout = millis() + MQTT_RECONNECT_INTERVAL_MS; // only retry next 5 seconds to prevent crash
       if (mqttClient != nullptr)
@@ -5798,7 +6086,7 @@ void sendRebootRequest(unsigned long nextSeconds)
 
 void checkRebootRequest()
 {
-  if (requestReboot and (millis() > requestRebootTime + REBOOT_REQUEST_INTERVAL_MS))
+  if (requestReboot and ((long)(millis() - (requestRebootTime + REBOOT_REQUEST_INTERVAL_MS)) > 0))
   {
     requestReboot = false;
     requestRebootTime = 0;
@@ -5809,7 +6097,7 @@ void checkRebootRequest()
 
 void checkHpUpdateRequest()
 {
-  if (requestHpUpdate and (millis() > requestHpUpdateTime))
+  if (requestHpUpdate and ((long)(millis() - (requestHpUpdateTime)) > 0))
   {
     requestHpUpdate = false;
     requestHpUpdateTime = 0;
@@ -5820,7 +6108,7 @@ void checkHpUpdateRequest()
 
 void checkWifiScanRequest()
 {
-  if (requestWifiScan and (millis() > requestWifiScanTime))
+  if (requestWifiScan and ((long)(millis() - (requestWifiScanTime)) > 0))
   {
     requestWifiScan = false;
     requestWifiScanTime = 0;
@@ -5844,7 +6132,7 @@ void WiFiEvent(WiFiEvent_t event)
   if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP || event == ARDUINO_EVENT_WIFI_STA_GOT_IP6)
   {
     ESP_LOGD(TAG, "WiFi connected, IP address: %s", WiFi.localIP().toString().c_str());
-    if (millis() > mqtt_reconnect_timeout)
+    if ((long)(millis() - (mqtt_reconnect_timeout)) > 0)
     {
       mqtt_reconnect_timeout = millis() + MQTT_RECONNECT_INTERVAL_MS; // only retry next 5 seconds to prevent crash
       ticker.detach();                                                // Stop blinking the LED because now we are connected:)
@@ -5858,7 +6146,7 @@ void WiFiEvent(WiFiEvent_t event)
   else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
   {
     ESP_LOGD(TAG, "WiFi lost connection");
-    if (millis() > wifi_timeout)
+    if ((long)(millis() - (wifi_timeout)) > 0)
     {
       ESP_LOGD(TAG, "Starting AP mode");
       xTimerStop(mqttReconnectTimer, 0);
@@ -5866,7 +6154,7 @@ void WiFiEvent(WiFiEvent_t event)
     }
     else
     { // retry connect
-      if (millis() > wifi_reconnect_timeout)
+      if ((long)(millis() - (wifi_reconnect_timeout)) > 0)
       {
         wifi_reconnect_timeout = millis() + WIFI_RECONNECT_INTERVAL_MS; // only retry next 5 seconds to prevent crash
         xTimerStop(mqttReconnectTimer, 0);                              // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
@@ -5880,7 +6168,7 @@ void WiFiEvent(WiFiEvent_t event)
 void onWifiConnect(const WiFiEventStationModeGotIP &event)
 {
   ESP_LOGD(TAG, "WiFi connected, IP address: %s", WiFi.localIP().toString().c_str());
-  if (millis() > mqtt_reconnect_timeout)
+  if ((long)(millis() - (mqtt_reconnect_timeout)) > 0)
   {
     mqtt_reconnect_timeout = millis() + MQTT_RECONNECT_INTERVAL_MS; // only retry next 5 seconds to prevent crash
     ticker.detach();                                                // Stop blinking the LED because now we are connected:)
@@ -6319,16 +6607,18 @@ String getWifiOptions(bool send)
       String ssid = getValueBySeparator(wifi_list, ';', i);
       if (!ssid.isEmpty())
       {
+        // names of nearby networks are attacker-controlled text
+        String esc = ksHtmlEscape(ssid);
         wifiOptions += "<option value='";
-        wifiOptions += ssid;
+        wifiOptions += esc;
         wifiOptions += "'>";
-        wifiOptions += ssid;
+        wifiOptions += esc;
         wifiOptions += "</option>";
       }
     }
     if (send)
     {
-      events.send(wifiOptions.c_str(), "wifiOptions", millis(), 20); // send wifi data to browser
+      events.send(wifiOptions.c_str(), "wifiOptions", millis(), 5000); // send wifi data to browser
     }
   }
   return wifiOptions;

@@ -186,7 +186,7 @@ class HeatPump
     heatpumpSettings currentSettings {};
     heatpumpSettings wantedSettings {};
     // Hacks
-    unsigned long lastWanted;
+    uint32_t lastWanted;
 
     // initialise to all off, then it will update shortly after connect;
     heatpumpStatus currentStatus {0, false, {TIMER_MODE_MAP[0], 0, 0, 0, 0}, 0};
@@ -196,10 +196,10 @@ class HeatPump
     HardwareSerial * _HardSerial {nullptr};
     int rxPin; // save rx pin for retry ESP32
     int txPin; // save tx pin for retry ESP32
-    unsigned long lastSend;
+    uint32_t lastSend;
     bool waitForRead;
     int infoMode;
-    unsigned long lastRecv;
+    uint32_t lastRecv;
     bool connected = false;
     bool autoUpdate;
     bool firstRun;
@@ -207,10 +207,15 @@ class HeatPump
     bool externalUpdate;
     bool wideVaneAdj;
     bool fastSync = false;
-    #define MAX_SEND_RETRY 20  // max time retry send control command
+    #define MAX_SEND_RETRY 4  // set packets sent for one command before giving up
     uint8_t control_ac_rty_cnt = 0;
     bool control_ac_confirm = true;
+    bool reportSinceUpdate = true; // the unit reported its settings since the last set packet
     void wantedChanged();
+    void giveUpCommand();
+    bool waitCanSend(bool isInfo);
+    bool waitCanRead();
+    bool waitAvailable(int n, uint32_t timeoutMs);
 
     const char* lookupByteMapValue(const char* valuesMap[], const byte byteMap[], int len, byte byteValue);
     int    lookupByteMapValue(const int valuesMap[], const byte byteMap[], int len, byte byteValue);

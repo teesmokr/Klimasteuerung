@@ -159,7 +159,7 @@ const char html_menu_setup[] PROGMEM =
             "</form>"
         "</div>"
         "<div>"
-            "<form action='/' method='get'>"
+            "<form action='/' method='post'>"
                 "<button type='submit' name='REBOOT' class='mbtn danger'>"
                     "<span class='ic'>"
                         "<svg width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"

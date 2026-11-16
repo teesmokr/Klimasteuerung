@@ -67,15 +67,18 @@ bool operator!=(const heatpumpTimers& lhs, const heatpumpTimers& rhs) {
 }
 
 
+// all timing uses 32-bit differences so the 49.7-day millis() wrap is harmless
+static inline uint32_t ms32() { return (uint32_t)millis(); }
+
 // Constructor /////////////////////////////////////////////////////////////////
 
 HeatPump::HeatPump() {
   rxPin = 0;
   txPin = 0;
-  lastWanted = millis();
-  lastSend = 0;
+  lastWanted = ms32();
+  lastSend = ms32() - (PACKET_SENT_INTERVAL_MS * 10);
   infoMode = 0;
-  lastRecv = millis() - (PACKET_SENT_INTERVAL_MS * 10);
+  lastRecv = ms32() - (PACKET_SENT_INTERVAL_MS * 10);
   autoUpdate = false;
   firstRun = true;
   tempMode = false;
@@ -103,6 +106,13 @@ bool HeatPump::connect(HardwareSerial *serial, int bitrate, int rx, int tx) {
   if(serial != NULL) {
     _HardSerial = serial;
   }
+  // (re)connecting: a command that was still pending when the link dropped is
+  // stale by the time the unit answers again - never execute it later
+  if(!firstRun) {
+    wantedSettings = currentSettings;
+    control_ac_confirm = true;
+    control_ac_rty_cnt = 0;
+  }
   bool retry = false;
   if(bitrate == 0) {
     bitrate = 2400;
@@ -118,7 +128,7 @@ bool HeatPump::connect(HardwareSerial *serial, int bitrate, int rx, int tx) {
 #endif
   } else {
 #if defined(ESP32)
-    if (rxPin > 0 && rxPin > 0) // check if custom pin previous set
+    if (rxPin > 0 && txPin > 0) // check if custom pin previous set
     {
       _HardSerial->begin(bitrate, SERIAL_8E1, rxPin, txPin);
     }
@@ -146,11 +156,11 @@ bool HeatPump::connect(HardwareSerial *serial, int bitrate, int rx, int tx) {
   memcpy(packet, CONNECT, CONNECT_LEN);
   //for(int count = 0; count < 2; count++) {
   writePacket(packet, CONNECT_LEN);
-  while(!canRead()) { delay(10); }
+  waitCanRead();
   int packetType = readPacket();
   if (packetType != RCVD_PKT_CONNECT_SUCCESS && retry)
   {
-    if (rxPin > 0 && rxPin > 0) // check if custom pin previous set
+    if (rxPin > 0 && txPin > 0) // check if custom pin previous set
     {
       return connect(serial, 9600, rxPin, txPin);
     }
@@ -165,7 +175,15 @@ bool HeatPump::connect(HardwareSerial *serial, int bitrate, int rx, int tx) {
 }
 
 bool HeatPump::update() {
-  while(!canSend(false)) { delay(10); }
+  // nothing to send (e.g. called after setRemoteTemperature): do not block
+  if(!firstRun && wantedSettings == currentSettings) {
+    return true;
+  }
+  // this command is already on its way and the unit has not reported back yet
+  if(!control_ac_confirm && control_ac_rty_cnt > 0 && !reportSinceUpdate) {
+    return true;
+  }
+  if(!waitCanSend(false)) { return false; }
 
   // Flush the serial buffer before updating settings to clear out
   // any remaining responses that would prevent us from receiving
@@ -175,63 +193,60 @@ bool HeatPump::update() {
   byte packet[PACKET_LEN] = {};
   createPacket(packet, wantedSettings);
   writePacket(packet, PACKET_LEN);
-  // Only a real change needs a confirmation from the unit. An update() that
-  // carries nothing new (e.g. after setRemoteTemperature) must not reopen the
-  // "command pending" window, or an IR remote change arriving right after it
-  // would be treated as a not-yet-applied command and overwritten.
-  if (wantedSettings != currentSettings) {
-    control_ac_rty_cnt = 0;       // Reset retry count
-    control_ac_confirm = false;   // we should check to confirm it
-  }
+  control_ac_confirm = false;   // wait for the unit to report the new state
+  reportSinceUpdate = false;
+  if(control_ac_rty_cnt < 255) { control_ac_rty_cnt++; }
 
-  while(!canRead()) { delay(10); }
+  if(!waitCanRead()) { return false; }
   int packetType = readPacket();
 
   if(packetType == RCVD_PKT_UPDATE_SUCCESS) {
     // call sync() to get the latest settings from the heatpump for autoUpdate, which should now have the updated settings
     if(autoUpdate) { //this sync will happen regardless, but autoUpdate needs it sooner than later.
-	    while(!canSend(true)) {
-		    delay(10);
-	    }
-	    sync(RQST_PKT_SETTINGS);
+      waitCanSend(true);
+      sync(RQST_PKT_SETTINGS);
     } else {
       // No auto update, but the next time we sync, fetch the updated settings first
       infoMode = 0;
     }
-
     return true;
-  } else {
-    return false;
   }
+  // no ACK: ask for the settings anyway so the retry/give-up logic gets a report
+  infoMode = 0;
+  return false;
+}
+
+// the unit did not take the command after MAX_SEND_RETRY attempts: stop
+// re-sending and accept what it reports
+void HeatPump::giveUpCommand() {
+  wantedSettings = currentSettings;
+  control_ac_confirm = true;
+  control_ac_rty_cnt = 0;
 }
 
 void HeatPump::sync(byte packetType) {
-  if((!connected) || (millis() - lastRecv > (PACKET_SENT_INTERVAL_MS * 10))) {
+  if((!connected) || ((uint32_t)(ms32() - lastRecv) > (uint32_t)(PACKET_SENT_INTERVAL_MS * 10))) {
     connect(NULL);
   }
   else if(canRead()) {
     readAllPackets();
+    // nothing arrived inside the reply window: do not wait forever for it
+    waitForRead = false;
   }
-  else if(autoUpdate && !firstRun && wantedSettings != currentSettings && packetType == PACKET_TYPE_DEFAULT) {
-    update();
+  else if(autoUpdate && !firstRun && (!control_ac_confirm || !externalUpdate) && wantedSettings != currentSettings
+          && packetType == PACKET_TYPE_DEFAULT && (control_ac_rty_cnt == 0 || reportSinceUpdate)) {
+    // (re)send the command, but only after the unit reported its state since
+    // the last attempt, and only a limited number of times
+    if(control_ac_rty_cnt >= MAX_SEND_RETRY) {
+      giveUpCommand();
+    } else {
+      update();
+    }
   }
   else if(canSend(true)) {
     byte packet[PACKET_LEN] = {};
     createInfoPacket(packet, packetType);
     writePacket(packet, PACKET_LEN);
-    // Send control data util the ac activate and read data is match
-    if (!control_ac_confirm && (control_ac_rty_cnt < MAX_SEND_RETRY)) {
-      delay(200);
-      // read immedietly to check data
-      readAllPackets();
-      if (!control_ac_confirm) {
-        control_ac_rty_cnt++;
-        memset(packet, 0, sizeof(packet));
-        createPacket(packet, wantedSettings);
-        // resend the data because we call update() one time only
-        writePacket(packet, PACKET_LEN);
-      }
-    }
   }
 }
 
@@ -259,7 +274,7 @@ heatpumpSettings HeatPump::getSettings() {
 // called by every setter: remember when, and open the "command pending" window
 // if the unit is not already in the wanted state
 void HeatPump::wantedChanged() {
-  lastWanted = millis();
+  lastWanted = ms32();
   if (!firstRun && wantedSettings != currentSettings) {
     control_ac_confirm = false;
     control_ac_rty_cnt = 0;
@@ -343,7 +358,10 @@ float HeatPump::getTemperature() {
 
 void HeatPump::setTemperature(float setting) {
   if(!tempMode){
-    wantedSettings.temperature = lookupByteMapIndex(TEMP_MAP, 16, (int)(setting + 0.5)) > -1 ? setting : TEMP_MAP[0];
+    // whole degrees 16..31 only: clamp instead of jumping to 31 or indexing
+    // the lookup table with a truncated value
+    int t = (int)lround(setting);
+    wantedSettings.temperature = t < 16 ? 16 : (t > 31 ? 31 : t);
   }
   else {
     setting = setting * 2;
@@ -377,7 +395,7 @@ void HeatPump::setRemoteTemperature(float setting) {
   // add the checksum
   byte chkSum = checkSum(packet, 21);
   packet[21] = chkSum;
-  while(!canSend(false)) { delay(10); }
+  waitCanSend(false);
   writePacket(packet, PACKET_LEN);
 }
 
@@ -472,7 +490,7 @@ void HeatPump::setRoomTempChangedCallback(ROOM_TEMP_CHANGED_CALLBACK_SIGNATURE) 
 
 //#### WARNING, THE FOLLOWING METHOD CAN F--K YOUR HP UP, USE WISELY ####
 void HeatPump::sendCustomPacket(byte data[], int packetLength) {
-  while(!canSend(false)) { delay(10); }
+  waitCanSend(false);
 
   packetLength += 2; // +2 for first header byte and checksum
   packetLength = (packetLength > PACKET_LEN) ? PACKET_LEN : packetLength; // ensure we are not exceeding PACKET_LEN
@@ -503,6 +521,9 @@ int HeatPump::lookupByteMapIndex(const int valuesMap[], int len, int lookupValue
 }
 
 int HeatPump::lookupByteMapIndex(const char* valuesMap[], int len, const char* lookupValue) {
+  if (lookupValue == NULL) {
+    return -1; // no state received from the unit yet
+  }
   for (int i = 0; i < len; i++) {
     if (strcasecmp(valuesMap[i], lookupValue) == 0) {
       return i;
@@ -531,11 +552,40 @@ int HeatPump::lookupByteMapValue(const int valuesMap[], const byte byteMap[], in
 }
 
 bool HeatPump::canSend(bool isInfo) {
-  return (millis() - (isInfo ? PACKET_INFO_INTERVAL_MS : PACKET_SENT_INTERVAL_MS)) > lastSend;
-}  
+  return (uint32_t)(ms32() - lastSend) > (uint32_t)(isInfo ? PACKET_INFO_INTERVAL_MS : PACKET_SENT_INTERVAL_MS);
+}
 
 bool HeatPump::canRead() {
-  return (waitForRead && (millis() - PACKET_SENT_INTERVAL_MS) > lastSend);
+  return waitForRead && (uint32_t)(ms32() - lastSend) > (uint32_t)PACKET_SENT_INTERVAL_MS;
+}
+
+// bounded waits: never hang the main loop if the timing state is off
+bool HeatPump::waitCanSend(bool isInfo) {
+  uint32_t t0 = ms32();
+  while(!canSend(isInfo)) {
+    if((uint32_t)(ms32() - t0) > 3000) { return false; }
+    delay(10);
+  }
+  return true;
+}
+
+bool HeatPump::waitCanRead() {
+  uint32_t t0 = ms32();
+  while(!canRead()) {
+    if(!waitForRead || (uint32_t)(ms32() - t0) > 3000) { return false; }
+    delay(10);
+  }
+  return true;
+}
+
+// wait until n bytes are buffered (2400 baud: about 4 ms per byte)
+bool HeatPump::waitAvailable(int n, uint32_t timeoutMs) {
+  uint32_t t0 = ms32();
+  while(_HardSerial->available() < n) {
+    if((uint32_t)(ms32() - t0) > timeoutMs) { return false; }
+    delay(2);
+  }
+  return true;
 }
 
 byte HeatPump::checkSum(byte bytes[], int len) {
@@ -633,7 +683,7 @@ void HeatPump::writePacket(byte *packet, int length) {
     packetCallback(packet, length, (char*)"packetSent");
   }
   waitForRead = true;
-  lastSend = millis();
+  lastSend = ms32();
 }
 
 int HeatPump::readPacket() {
@@ -661,6 +711,9 @@ int HeatPump::readPacket() {
     }
     
     //read header
+    if(!waitAvailable(4, 100)) {
+      return RCVD_PKT_FAIL; // truncated packet
+    }
     for(int i=1;i<5;i++) {
       header[i] =  _HardSerial->read();
     }
@@ -668,6 +721,14 @@ int HeatPump::readPacket() {
     //check header
     if(header[0] == HEADER[0] && header[2] == HEADER[2] && header[3] == HEADER[3]) {
       dataLength = header[4];
+      // the length byte comes from the wire: never write past data[] (line
+      // noise or a corrupted header must not smash the stack)
+      if(dataLength >= PACKET_LEN) {
+        return RCVD_PKT_FAIL;
+      }
+      if(!waitAvailable(dataLength + 1, 250)) {
+        return RCVD_PKT_FAIL; // truncated packet
+      }
       
       for(int i=0;i<dataLength;i++) {
         data[i] = _HardSerial->read();
@@ -690,7 +751,7 @@ int HeatPump::readPacket() {
       checksum = (0xfc - dataSum) & 0xff;
 
       if(data[dataLength] == checksum) {
-        lastRecv = millis();
+        lastRecv = ms32();
         if(packetCallback) {
           byte packet[37]; // we are going to put header[5] and data[32] into this, so the whole packet is sent to the callback
           for(int i=0; i<INFOHEADER_LEN; i++) {
@@ -730,21 +791,31 @@ int HeatPump::readPacket() {
               // confirmation never came.
               bool settingsChanged = receivedSettings != currentSettings;
               currentSettings = receivedSettings;
+              reportSinceUpdate = true;
 
-              if (!control_ac_confirm && wantedSettings == receivedSettings) {
-                control_ac_confirm = true; // the unit applied our command
-              }
-              // We stop send control command after MAX_SEND_RETRY times
-              if (control_ac_rty_cnt >= MAX_SEND_RETRY && !control_ac_confirm) {
-                control_ac_confirm = true;
+              if (!control_ac_confirm) {
+                // iSee cannot be set, so it is not part of the comparison
+                bool applied = wantedSettings.power == receivedSettings.power &&
+                               wantedSettings.mode == receivedSettings.mode &&
+                               wantedSettings.temperature == receivedSettings.temperature &&
+                               wantedSettings.fan == receivedSettings.fan &&
+                               wantedSettings.vane == receivedSettings.vane &&
+                               wantedSettings.wideVane == receivedSettings.wideVane;
+                if (applied || control_ac_rty_cnt >= MAX_SEND_RETRY) {
+                  // applied, or the unit keeps answering with something else
+                  // (e.g. it rounds the temperature): stop here and accept it
+                  control_ac_confirm = true;
+                  control_ac_rty_cnt = 0;
+                }
               }
 
               // No command of ours is pending (first sync, confirmed, given up, or
               // the grace period ran out): whatever the unit reports now was set
               // externally (IR remote), so adopt it instead of fighting it.
-              if(firstRun || (autoUpdate && externalUpdate && (control_ac_confirm || millis() - lastWanted > AUTOUPDATE_GRACE_PERIOD_IGNORE_EXTERNAL_UPDATES_MS))) {
+              if(firstRun || (autoUpdate && externalUpdate && (control_ac_confirm || (uint32_t)(ms32() - lastWanted) > (uint32_t)AUTOUPDATE_GRACE_PERIOD_IGNORE_EXTERNAL_UPDATES_MS))) {
                 wantedSettings = currentSettings;
                 control_ac_confirm = true;
+                control_ac_rty_cnt = 0;
                 firstRun = false;
               }
 
@@ -894,11 +965,11 @@ heatpumpFunctions HeatPump::getFunctions() {
   packet2[5] = FUNCTIONS_GET_PART2;
   packet2[21] = checkSum(packet2, 21);
   
-  while(!canSend(false)) { delay(10); }
+  waitCanSend(false);
   writePacket(packet1, PACKET_LEN);
   readPacket();
 
-  while(!canSend(false)) { delay(10); }
+  waitCanSend(false);
   writePacket(packet2, PACKET_LEN);
   readPacket();
 
@@ -942,11 +1013,11 @@ bool HeatPump::setFunctions(heatpumpFunctions const& functions) {
   packet1[21] = checkSum(packet1, 21);
   packet2[21] = checkSum(packet2, 21);
 
-  while(!canSend(false)) { delay(10); }
+  waitCanSend(false);
   writePacket(packet1, PACKET_LEN);
   readPacket();
 
-  while(!canSend(false)) { delay(10); }
+  waitCanSend(false);
   writePacket(packet2, PACKET_LEN);
   readPacket();
 
