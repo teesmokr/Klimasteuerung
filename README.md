@@ -52,9 +52,10 @@ made with ❤ in Lingen
 
 ## Erste Schritte
 
-1. **Flashen** (einmalig per USB): [esptool-js](https://espressif.github.io/esptool-js/) im Chrome/Edge-Browser öffnen, ESP verbinden und die passende Datei bei Flash-Adresse `0x0` flashen:
-   - ESP32: `firmware.factory.bin` (aus `.pio/build/ESP32DEV/`)
-   - Wemos D1 Mini / ESP-01: `firmware.bin` der jeweiligen Build-Umgebung
+1. **Flashen** (einmalig per USB): [esptool-js](https://espressif.github.io/esptool-js/) im Chrome/Edge-Browser öffnen, ESP verbinden und die passende Datei aus dem [neuesten Release](../../releases/latest) bei Flash-Adresse `0x0` flashen:
+   - ESP32: `Klimasteuerung_ESP32_factory_0x0.bin`
+   - Wemos D1 Mini: `Klimasteuerung_WEMOS_D1_Mini.bin`
+   - ESP-01 (1 MB Flash): `Klimasteuerung_ESP8266-ESP01.bin` — Updates sind hier nur per USB möglich, das Online-Update braucht mehr Speicher
 2. **Verbinden**: Nach dem ersten Start öffnet das Gerät ein WLAN namens `Klimaanlage-XXXXXXXXXXXX`. Damit verbinden — das Setup öffnet sich automatisch (sonst `http://192.168.4.1` aufrufen). Tipp: Am Handy vorher die mobilen Daten ausschalten, sonst versucht der Browser die Seite übers Mobilfunknetz zu laden.
 3. **Einrichten**: Gerätename (z. B. `schlafzimmer`), WLAN-Zugangsdaten und optional MQTT eintragen, speichern, neu starten. Danach ist das Gerät unter `http://<name>.local` bzw. seiner IP erreichbar.
 
@@ -66,7 +67,21 @@ made with ❤ in Lingen
 
 > ⚠️ **Achtung**: Für den Anschluss muss die Inneneinheit geöffnet werden (`CN105`-Stecker auf der Hauptplatine). Vorher unbedingt die Stromversorgung trennen — unsachgemäßer Umgang kann zu Wasserschäden, Stromschlag oder Brand führen!
 
-> **Hinweis Login**: Ist auf einem Gerät ein Login-Passwort gesetzt, lässt es sich aus Sicherheitsgründen nicht von einem anderen Gerät aus fernsteuern (Cookie-Authentifizierung). Im Heimnetz ohne Gerätepasswörter funktioniert die Mehrgeräte-Steuerung ohne Einschränkung.
+> **Hinweis Login**: Ist auf einem Gerät ein Login-Passwort gesetzt, lässt es sich nicht von einem anderen Gerät aus fernsteuern (die Anmeldung gilt nur für das Gerät selbst). Die Mehrgeräte-Steuerung funktioniert deshalb nur zwischen Geräten ohne Login-Passwort.
+
+***
+
+## Sicherheit
+
+Die Klimasteuerung ist für das **eigene Heimnetz** gedacht und spricht dort unverschlüsseltes HTTP. Bitte beachten:
+
+- **Nicht ins Internet stellen**: keine Portfreigabe auf das Gerät. Für den Zugriff von unterwegs ein VPN ins Heimnetz nutzen.
+- **Login-Passwort setzen** (*Einstellungen → Einheit*), wenn nicht jedes Gerät im WLAN die Anlage bedienen dürfen soll. Mit Passwort sind Einstellungen, Sicherung und Firmware-Upload nur nach Anmeldung erreichbar; nach mehreren Fehlversuchen wird die Anmeldung gebremst. Ohne Passwort kann jedes Gerät im selben Netz alles steuern und ändern.
+- **Fremde Webseiten bleiben draußen**: Das Gerät nimmt Anfragen nur an, wenn es über seine IP-Adresse oder einen lokalen Namen (`name.local`, `name.fritz.box` …) angesprochen wird und die aufrufende Seite ebenfalls aus dem lokalen Netz stammt. Änderungen gehen nur per POST.
+- **Notfall-WLAN**: Erreicht das Gerät das Heim-WLAN nicht, öffnet es ein eigenes WLAN mit seinem Namen. Das Passwort dafür ist das Login-Passwort, sonst das Passwort des eingerichteten Heim-WLANs.
+- **Sicherungsdatei**: enthält WLAN-, MQTT- und Login-Passwort im Klartext — sicher aufbewahren.
+- **MQTT**: Wer auf den Broker schreiben darf, kann die Anlage steuern und das Gerät zurücksetzen (`.../system/set factory`).
+- **Kein Sicherheitsbauteil**: Frostschutz, Zeitpläne und Abschaltungen sind Komfortfunktionen ohne Garantie. Die Schutzfunktionen der Klimaanlage selbst bleiben unberührt.
 
 ***
 
