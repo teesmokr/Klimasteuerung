@@ -1592,20 +1592,27 @@ void checkHistory()
     memset(histOn, 0, sizeof(histOn));
     hist_ready = true;
   }
-  if (lastHistSample != 0 && millis() - lastHistSample < 300000UL)
+  // until the first valid reading look every 10 seconds, so the curve starts
+  // right after a restart instead of up to five minutes later
+  static bool histStarted = false;
+  if (lastHistSample != 0 && millis() - lastHistSample < (histStarted ? 300000UL : 10000UL))
     return;
   lastHistSample = millis();
   int8_t v = HIST_NONE;
   if (hp.isConnected())
   {
     float t = hp.getRoomTemperature();
-    if (t > -40 && t < 60)
+    // exactly 0 means "no reading yet" (same rule as hpStatusChanged)
+    if (t > -40 && t < 60 && t != 0)
     {
       v = (int8_t)lroundf(t * 2.0f);
       hist7_sum += t;
       hist7_cnt++;
     }
   }
+  if (v == HIST_NONE && !histStarted)
+    return; // nothing to record yet
+  histStarted = true;
   bool on = false;
   if (hp.isConnected())
   {
