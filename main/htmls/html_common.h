@@ -815,6 +815,12 @@ const char html_css[] PROGMEM =
         "#histcard { order: -3; margin-bottom: 18px; }"
         ".hhead { display: flex; align-items: baseline; justify-content: space-between; }"
         ".hhead h2 { margin: 0 0 6px; font-size: 1.35rem; font-weight: 300; letter-spacing: 0; text-transform: none; text-align: left; }"
+        /* the history can be folded away; the heading is the switch */
+        "#histtoggle { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 8px; margin: 0; -webkit-user-select: none; user-select: none; }"
+        ".hchev { width: 0; height: 0; border: 5px solid transparent; border-top-color: var(--muted); border-bottom: 0; transition: transform .15s; }"
+        "#histcard.closed .hchev { transform: rotate(-90deg); }"
+        "#histcard.closed svg, #histcard.closed .histmeta, #histcard.closed .histrange { display: none !important; }"
+        "#histcard.closed { margin-bottom: 4px; }"
         ".histrange { display: flex; gap: 14px; }"
         ".histrange button { width: auto; min-height: 44px; padding: 12px 4px 3px; background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--muted); font-size: .8rem; font-weight: 400; }"
         ".histrange button.active { color: var(--text); font-weight: 600; border-bottom-color: var(--text); }"

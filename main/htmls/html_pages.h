@@ -258,7 +258,7 @@ const char html_page_control[] PROGMEM =
             "<div id='ctrlcard'>"
                 "<div id='histcard' style='display:none'>"
                     "<div class='hhead'>"
-                        "<h2>Verlauf</h2>"
+                        "<h2 id='histtoggle' role='button' tabindex='0' aria-expanded='true'>Verlauf<span class='hchev'></span></h2>"
                         "<div class='histrange'>"
                             "<button type='button' id='hr24' class='active'>24 h</button>"
                             "<button type='button' id='hr7'>7 Tage</button>"
