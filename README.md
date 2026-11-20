@@ -38,6 +38,11 @@ made with ❤ in Lingen
 - **Wie eine App**: In Safari (iPhone) oder Chrome (Android) „Zum Home-Bildschirm" wählen — die Klimasteuerung startet mit eigenem Icon im Vollbild, mit Statusleiste in Seitenfarbe, Abstand zu Notch und Home-Balken und sofort aktuellem Stand beim Öffnen
 - **Alle aus**: Ein Knopf auf der Steuerung schaltet alle verknüpften Geräte auf einmal ab
 - **Temperatur-Verlauf mit Laufzeit**: Kurve der Raumtemperatur über 24 Stunden oder 7 Tage direkt auf der Steuerung, dazu Balken, wann die Anlage lief, und die Gesamtlaufzeit (auch für die anderen Geräte per Tab)
+- **Messwerte**: Betriebszustand (heizt/kühlt/bereit), Leistung in Watt, Verbrauch in kWh und Außentemperatur, sofern das Innengerät sie meldet; der Verlauf bleibt über Neustart und Update erhalten
+- **Externer Raumfühler**: Regelung nach einem Fühler im Raum statt am Innengerät — per Abruf (andere Klimasteuerung, Shelly, beliebige JSON-Quelle) oder per Aufruf `GET /api/rtemp?k=<Schlüssel>&t=<°C>` (*Einstellungen → Zeitpläne → Raumfühler*)
+- **Fenster offen**: erkennt einen plötzlichen Temperatursturz und zeigt wahlweise nur einen Hinweis, pausiert oder schaltet aus (*Einstellungen → Zeitpläne → Fenster offen*)
+- **Szenen und Gruppe**: bis zu 6 Szenen als Tasten unter dem Temperaturregler, Tab „Alle" steuert alle Geräte gemeinsam
+- **Zeitpläne nach Sonnenstand**: Beginn/Ende bei Sonnenaufgang oder -untergang mit Versatz, berechnet auf dem Gerät
 - **Filter-Erinnerung**: Betriebsstundenzähler pro Gerät; nach einstellbarer Laufzeit erinnert die Steuerung ans Filterreinigen (*Einstellungen → Zeitpläne → Filter*)
 - **CN105-Diagnose**: Live-RX/TX-Log der seriellen Verbindung zum Innengerät (*Einstellungen → Status → CN105-Diagnose*) — die letzten 48 Pakete mit Zeitstempel, Richtung und Typ-Dekodierung, mit Pause- und Kopier-Funktion für Fehlerberichte; ideal bei Verkabelungs- und Verbindungsproblemen
 - **Gerätefehler-Anzeige**: Meldet die Anlage eine Störung, blendet die Steuerung ein Warnband mit dem gemeldeten Störcode ein; der Code steht außerdem unter *Einstellungen → Status* und in der CN105-Diagnose (dort mit den Rohbytes zum Nachschlagen). Der Störcode stammt aus der bislang ungenutzten CN105-Info-Antwort (Typ `0x04`); da die genaue Byte-Zuordnung je nach Modell nicht dokumentiert ist, wird bewusst kein herstellerspezifischer Kürzel (z. B. „P8") erfunden — angezeigt wird der rohe Code (`0xXXXX`). Fehlt die CN105-Verbindung ganz, erscheint weiterhin der Hinweis „HVAC nicht verbunden". Der Wert liegt auch in `GET /api/status` (Feld `fault`) und `GET /api/cn105` vor
@@ -45,7 +50,7 @@ made with ❤ in Lingen
 - **Urlaubsmodus**: pausiert Zeitpläne und Nacht-Automatik (auf Wunsch auf allen Geräten), optional mit Frostschutz-Wächter
 - **Zeitpläne übertragen**: fertige Regel-Sätze per Klick auf ein anderes Gerät kopieren
 - **Online-Update per Klick**: Der Browser prüft das neueste GitHub-Release, lädt es herunter und spielt es direkt aufs Gerät ein (*Einstellungen → Firmware-Aktualisierung*) — das Gerät selbst braucht dafür weder Internetzugang noch TLS-RAM; als Fallback bleibt der geräteseitige Weg erhalten. Die installierte Version steht im Fußbereich jeder Seite
-- **JSON-API**: `GET /api/status`, `POST /api/control`, `GET|POST /api/devices`, `GET|POST /api/schedules`, `POST /api/adhoc`, `GET|POST /api/night`, `GET /api/history`, `GET|POST /api/filter`, `GET|POST /api/holiday`, `GET|POST /api/clean`, `GET|POST /api/backup`, `GET|POST /api/update` (CORS-freigegeben)
+- **JSON-API**: `GET /api/status`, `POST /api/control`, `GET|POST /api/devices`, `GET|POST /api/schedules`, `POST /api/adhoc`, `GET|POST /api/night`, `GET /api/history`, `GET|POST /api/scenes`, `GET|POST /api/window`, `GET|POST /api/rsens`, `GET /api/rtemp`, `GET|POST /api/geo`, `GET|POST /api/filter`, `GET|POST /api/holiday`, `GET|POST /api/clean`, `GET|POST /api/backup`, `GET|POST /api/update` (CORS-freigegeben)
 - Alles Weitere vom Original: Home-Assistant-Autodiscovery, MQTT-Steuerung, OTA-Firmware-Update, Erstkonfiguration per WLAN-Access-Point, Login-Schutz, mehrsprachige Systemseiten
 
 ***

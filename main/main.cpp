@@ -89,6 +89,10 @@ struct ScheduleRule
   char mode[9];       // AUTO/COOL/HEAT/DRY/FAN
   float temp;         // in the target unit's display scale (sent as TEMP)
   bool offAfter;      // power off when the window ends
+  uint8_t fromSrc;    // 0 = fixed time, 1 = sunrise, 2 = sunset
+  uint8_t toSrc;
+  int16_t fromOff;    // minutes added to sunrise/sunset
+  int16_t toOff;
   bool active;        // runtime: window currently applied
   uint8_t retries;    // runtime: failed attempts to deliver the pending start/end
 };
@@ -372,6 +376,14 @@ uint8_t hist7_cnt = 0;
 uint8_t hist7_ticks = 0;
 void checkHistory();
 void handleApiHistory(AsyncWebServerRequest *request);
+void histSave();
+void loadFeatures();
+void checkFeatures();
+void handleApiRtemp(AsyncWebServerRequest *request);
+void handleApiRsens(AsyncWebServerRequest *request);
+void handleApiWindow(AsyncWebServerRequest *request);
+void handleApiScenes(AsyncWebServerRequest *request);
+void handleApiGeo(AsyncWebServerRequest *request);
 
 // filter runtime counter: ON-minutes since the last filter reset
 uint32_t filter_minutes = 0;
@@ -555,6 +567,7 @@ void setup()
   loadHoliday();
   loadSmart();
   loadClean();
+  loadFeatures();
 #ifdef ESP32
   WiFi.setHostname(hostname.c_str());
 #else
@@ -624,6 +637,11 @@ void setup()
         server.on("/api/adhoc", handleApiAdhoc);
         server.on("/api/night", handleApiNight);
         server.on("/api/history", handleApiHistory);
+        server.on("/api/rtemp", handleApiRtemp);
+        server.on("/api/rsens", handleApiRsens);
+        server.on("/api/window", handleApiWindow);
+        server.on("/api/scenes", handleApiScenes);
+        server.on("/api/geo", handleApiGeo);
         server.on("/api/filter", handleApiFilter);
         server.on("/api/holiday", handleApiHoliday);
         server.on("/api/clean", handleApiClean);
@@ -1136,7 +1154,7 @@ static uint16_t parseHM(const char *s)
 
 bool parseSchedules(const String& json)
 {
-  const size_t capacity = JSON_ARRAY_SIZE(MAX_SCHEDULES) + MAX_SCHEDULES * JSON_OBJECT_SIZE(12) + 1024;
+  const size_t capacity = JSON_ARRAY_SIZE(MAX_SCHEDULES) + MAX_SCHEDULES * JSON_OBJECT_SIZE(16) + 1024;
   DynamicJsonDocument doc(capacity);
   DeserializationError err = deserializeJson(doc, json);
   if (err || !doc.is<JsonArray>())
@@ -1178,6 +1196,16 @@ bool parseSchedules(const String& json)
     strlcpy(r.mode, o["md"] | "COOL", sizeof(r.mode));
     r.temp = o["tp"] | 22.0f;
     r.offAfter = (o["off"] | 1) != 0;
+    r.fromSrc = o["fs"] | 0;
+    r.toSrc = o["ts"] | 0;
+    if (r.fromSrc > 2)
+      r.fromSrc = 0;
+    if (r.toSrc > 2)
+      r.toSrc = 0;
+    int fo = o["fo"] | 0;
+    int to = o["to"] | 0;
+    r.fromOff = (int16_t)(fo < -180 ? -180 : (fo > 180 ? 180 : fo));
+    r.toOff = (int16_t)(to < -180 ? -180 : (to > 180 ? 180 : to));
     r.active = false;
     n++;
   }
@@ -1459,6 +1487,8 @@ static void nightSendSettings(heatpumpSettings &settings)
   requestHpUpdateTime = millis() + 10;
 }
 
+#include "features.h"
+
 void applyNight()
 {
   if (!hp.isConnected() || night_active)
@@ -1590,7 +1620,33 @@ void checkHistory()
       hist7On[i] = 0;
     }
     memset(histOn, 0, sizeof(histOn));
+    memset(histOut, HIST_NONE, sizeof(histOut));
+    memset(hist7Out, HIST_NONE, sizeof(hist7Out));
+    memset(hist7E, 0, sizeof(hist7E));
     hist_ready = true;
+    hist_boot_ms = millis();
+    hist_gap_pending = histLoad();
+  }
+  if (hist_gap_pending)
+  {
+    // place the time the device was off as a gap once the clock is known;
+    // without a clock after ten minutes, carry on without a gap
+    time_t nowT;
+    time(&nowT);
+    if (nowT >= min_valid_date)
+    {
+      hist_gap_pending = false;
+      if (hist_saved_epoch != 0 && nowT > hist_saved_epoch)
+        histSkip((uint32_t)(nowT - hist_saved_epoch));
+    }
+    else if (millis() - hist_boot_ms > 600000UL)
+    {
+      hist_gap_pending = false;
+    }
+    else
+    {
+      return; // do not record before the old curve is placed
+    }
   }
   // until the first valid reading look every 10 seconds, so the curve starts
   // right after a restart instead of up to five minutes later
@@ -1620,6 +1676,7 @@ void checkHistory()
     on = hs.power != NULL && strcmp(hs.power, "ON") == 0;
   }
   hist[hist_head] = v;
+  histOut[hist_head] = meas_out > -100 ? (int8_t)lroundf(meas_out * 2.0f) : HIST_NONE;
   if (on)
   {
     histOn[hist_head / 8] |= (uint8_t)(1 << (hist_head % 8));
@@ -1644,8 +1701,19 @@ void checkHistory()
     hist7_cnt = 0;
     hist7[hist7_head] = avg;
     hist7On[hist7_head] = hist7_oncnt;
+    hist7Out[hist7_head] = meas_out > -100 ? (int8_t)lroundf(meas_out * 2.0f) : HIST_NONE;
+    // energy of this slot from the unit's counter (0.1 kWh steps)
+    uint8_t de = 0;
+    if (meas_kwh >= 0)
+    {
+      if (hist_kwh_mark >= 0 && meas_kwh >= hist_kwh_mark && meas_kwh - hist_kwh_mark < 20.0f)
+        de = (uint8_t)lroundf((meas_kwh - hist_kwh_mark) * 10.0f);
+      hist_kwh_mark = meas_kwh;
+    }
+    hist7E[hist7_head] = de;
     hist7_oncnt = 0;
     hist7_head = (hist7_head + 1) % HIST7_LEN;
+    histSave();
   }
 }
 
@@ -1658,7 +1726,7 @@ void handleApiHistory(AsyncWebServerRequest *request)
   uint16_t len = week ? HIST7_LEN : HIST_LEN;
   uint16_t head = week ? hist7_head : hist_head;
   String json;
-  json.reserve(len * 6 + 48);
+  json.reserve(len * 11 + 96);
   json += F("{\"i\":");
   json += week ? 1800 : 300;
   json += F(",\"d\":\"");
@@ -1686,7 +1754,34 @@ void handleApiHistory(AsyncWebServerRequest *request)
     }
     json += (char)('0' + (c > 9 ? 9 : c));
   }
-  json += F("\"}");
+  json += '"';
+  // outside temperature, only when the unit reports one
+  const int8_t *obuf = week ? hist7Out : histOut;
+  bool anyOut = false;
+  for (uint16_t n = 0; hist_ready && n < len && !anyOut; n++)
+    anyOut = obuf[n] != HIST_NONE;
+  if (anyOut)
+  {
+    json += F(",\"o\":\"");
+    for (uint16_t n = 0; n < len; n++)
+    {
+      int8_t v = obuf[(head + n) % len];
+      if (v != HIST_NONE)
+        json += String(convertCelsiusToLocalUnit(v / 2.0f, useFahrenheit), 1);
+      if (n < len - 1)
+        json += ',';
+    }
+    json += '"';
+  }
+  float e24 = histEnergy(48);
+  if (e24 >= 0)
+  {
+    json += F(",\"e24\":");
+    json += String(e24, 1);
+    json += F(",\"e7\":");
+    json += String(histEnergy(HIST7_LEN), 1);
+  }
+  json += '}';
   request->send(200, "application/json", json);
 }
 
@@ -2155,6 +2250,7 @@ void checkSchedules()
   localtime_r(&now, &ti);
   uint16_t mins = (uint16_t)(ti.tm_hour * 60 + ti.tm_min);
   uint8_t wd = (uint8_t)((ti.tm_wday + 6) % 7); // Monday = 0
+  sunUpdate(now);
   for (uint8_t i = 0; i < schedules_count; i++)
   {
     ScheduleRule &r = schedules[i];
@@ -2163,8 +2259,19 @@ void checkSchedules()
       r.active = false;
       continue;
     }
-    if (r.fromMin >= r.toMin)
+    // fixed times, or sunrise/sunset of today plus the offset
+    int16_t fromMin = sunResolve(r.fromSrc, r.fromMin, r.fromOff);
+    int16_t toMin = sunResolve(r.toSrc, r.toMin, r.toOff);
+    if (fromMin < 0 || toMin < 0 || fromMin >= toMin)
+    {
+      // no location set, polar day, or the window collapsed: end what is running
+      if (r.active && (!r.offAfter || scheduleApply(r, false) || ++r.retries >= 15))
+      {
+        r.active = false;
+        r.retries = 0;
+      }
       continue;
+    }
     bool dayOk;
     if (r.repeatType == 1)
     {
@@ -2184,7 +2291,7 @@ void checkSchedules()
     {
       dayOk = (r.daysMask & (1 << wd)) != 0;
     }
-    bool inWindow = dayOk && mins >= r.fromMin && mins < r.toMin;
+    bool inWindow = dayOk && mins >= (uint16_t)fromMin && mins < (uint16_t)toMin;
     // a start/end that could not be delivered (unit not connected, remote
     // unit unreachable) is retried on the next ticks, for about five minutes
     if (inWindow && !r.active)
@@ -3346,7 +3453,7 @@ void handleApiStatus(AsyncWebServerRequest *request)
     return;
   heatpumpSettings s = hpBaseSettings();
   String json;
-  json.reserve(480);
+  json.reserve(600);
   json += F("{\"name\":\"");
   json += hostname;
   json += F("\",\"connected\":");
@@ -3406,7 +3513,37 @@ void handleApiStatus(AsyncWebServerRequest *request)
   json += hp.isUpdatePending() ? F("true") : F("false");
   json += F(",\"fault\":\"");
   json += hvacFaultText();
-  json += F("\"}");
+  json += '"';
+  if (hp.isConnected() && meas_seen06)
+  {
+    heatpumpStatus st = hp.getStatus();
+    json += F(",\"op\":");
+    json += st.operating ? 1 : 0;
+    json += F(",\"cf\":");
+    json += st.compressorFrequency;
+  }
+  if (meas_power_w >= 0)
+  {
+    json += F(",\"pw\":");
+    json += meas_power_w;
+  }
+  if (meas_kwh >= 0)
+  {
+    json += F(",\"kwh\":");
+    json += String(meas_kwh, 1);
+  }
+  if (meas_out > -100)
+  {
+    json += F(",\"out\":");
+    json += String(convertCelsiusToLocalUnit(meas_out, useFahrenheit), 1);
+  }
+  json += F(",\"win\":");
+  json += win_state;
+  json += F(",\"wm\":");
+  json += win_mode;
+  json += F(",\"rs\":");
+  json += rsens_valid ? 1 : 0;
+  json += '}';
   request->send(200, "application/json", json);
 }
 
@@ -3779,6 +3916,7 @@ void checkGitUpdate()
 #ifdef ESP32
     WiFiClientSecure client;
     client.setInsecure();
+    histSave(); // keep the curve across the update
     httpUpdate.rebootOnUpdate(true);
     httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
     t_httpUpdate_return ret = httpUpdate.update(client, url);
@@ -3788,6 +3926,7 @@ void checkGitUpdate()
     // no MFLN here: the download gets redirected to a different asset host
     // that may not accept the negotiated small buffer
     client.setBufferSizes(16384, 512); // small TX buffer halves the TLS RAM need
+    histSave(); // keep the curve across the update
     ESPhttpUpdate.rebootOnUpdate(true);
     ESPhttpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
     t_httpUpdate_return ret = ESPhttpUpdate.update(client, url);
@@ -3929,6 +4068,34 @@ void handleApiCn105(AsyncWebServerRequest *request)
   json += pktlog_total;
   json += F(",\"up\":");
   json += millis();
+  // raw measurement bytes (data[1..10] of the 0x03 / 0x06 replies) for checking the decoding
+  static const char hexm[] = "0123456789ABCDEF";
+  if (meas_seen03)
+  {
+    json += F(",\"m3\":\"");
+    for (uint8_t b = 0; b < sizeof(meas_raw03); b++)
+    {
+      json += hexm[meas_raw03[b] >> 4];
+      json += hexm[meas_raw03[b] & 0x0F];
+    }
+    json += '"';
+  }
+  if (meas_seen06)
+  {
+    json += F(",\"m6\":\"");
+    for (uint8_t b = 0; b < sizeof(meas_raw06); b++)
+    {
+      json += hexm[meas_raw06[b] >> 4];
+      json += hexm[meas_raw06[b] & 0x0F];
+    }
+    json += '"';
+  }
+  json += F(",\"mw\":");
+  json += meas_power_w;
+  json += F(",\"mk\":");
+  json += String(meas_kwh, 1);
+  json += F(",\"mo\":");
+  json += String(meas_out, 1);
   json += F(",\"fault\":\"");
   json += hvacFaultText();
   json += F("\",\"fv\":");
@@ -3971,7 +4138,8 @@ void handleApiCn105(AsyncWebServerRequest *request)
 // every config file that goes into a backup bundle; console.log is runtime-only
 static const char *const backup_conf_files[] = {
     wifi_conf, mqtt_conf, unit_conf, others_conf, devices_conf,
-    schedules_conf, adhoc_conf, night_conf, filter_conf, holiday_conf, smart_conf, clean_conf};
+    schedules_conf, adhoc_conf, night_conf, filter_conf, holiday_conf, smart_conf, clean_conf,
+    RSENS_FILE, WIN_FILE, SCENES_FILE, GEO_FILE};
 static const uint8_t backup_conf_count = sizeof(backup_conf_files) / sizeof(backup_conf_files[0]);
 
 // bundle keys are the bare file names so backups move between ESP32 ("/x.json")
@@ -4672,6 +4840,7 @@ void handleUploadLoop(AsyncWebServerRequest *request, const String& filename, si
   if (!index)
   {
     ESP_LOGD(TAG, "Starting OTA Update");
+    histSave(); // keep the curve across the update
     // save cpu by disconnect/stop retry mqtt server
     if (mqttClient != nullptr && mqttClient->connected())
     {
@@ -5041,6 +5210,8 @@ void hpPacketDebug(byte *packet, unsigned int length, const char *packetDirectio
   // the HeatPump library ignores. In the callback buffer a received info packet
   // is laid out as [0..4]=header (header[1]=0x62 on a reply), [5]=data[0]=info
   // type, [6..]=data[1..]; the abnormal-state code sits in data[4]/data[5].
+  if (e.dir == 0)
+    measDecode(packet, length);
   if (e.dir == 0 && length >= 11 && packet[1] == 0x62 && packet[5] == 0x04)
   {
     uint16_t code = ((uint16_t)packet[9] << 8) | packet[10];
@@ -6027,6 +6198,7 @@ void loop()
     checkClean();
     checkNight();
     checkHistory();
+    checkFeatures();
     checkFilter();
     checkHoliday();
     checkGitUpdate();
@@ -6086,6 +6258,7 @@ void loop()
 // Reboot in nextSeconds in the future
 void sendRebootRequest(unsigned long nextSeconds)
 {
+  histSave(); // keep the curve across the restart
   requestReboot = true;
   requestRebootTime = millis() + nextSeconds * 1000L;
   ESP_LOGI(TAG, "Send Reboot Request");
