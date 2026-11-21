@@ -187,6 +187,7 @@ class HeatPump
     heatpumpSettings wantedSettings {};
     // Hacks
     uint32_t lastWanted;
+    uint32_t wantedSeq = 0; // counts every setter call, also one that changed nothing
 
     // initialise to all off, then it will update shortly after connect;
     heatpumpStatus currentStatus {0, false, {TIMER_MODE_MAP[0], 0, 0, 0, 0}, 0};
@@ -286,6 +287,7 @@ class HeatPump
     void setFastSync(bool setting);
     // hacks
     unsigned long getLastWanted();
+    uint32_t getWantedSeq();
 
     // status
     heatpumpStatus getStatus();
