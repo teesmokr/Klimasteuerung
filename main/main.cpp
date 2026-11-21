@@ -1550,7 +1550,11 @@ void endNight()
     if (night_prev.wvane[0] != '\0')
       settings.wideVane = night_prev.wvane;
     night_prev.valid = false;
+    // restoring the day settings only carries a window pause's "off" along:
+    // the pause stays and still resumes (a snapshot of OFF is a real "off")
+    bool keepPause = strcmp(night_prev.power, "OFF") != 0 && winKeepBegin();
     nightSendSettings(settings);
+    winKeepEnd(keepPause);
   }
   ESP_LOGI(TAG, "Night mode off");
 }
@@ -4968,7 +4972,15 @@ heatpumpSettings change_states(AsyncWebServerRequest *request, heatpumpSettings 
   // own room temperature and picks heating or cooling itself
   if (request->hasArg(F("SMARTPICK")) && !request->hasArg(F("MODE")))
   {
-    const char *pick = smartPickMode(settings.temperature);
+    // together with SMART=1 Automatik was just chosen: pick now. Alone it is a
+    // temperature change from the group tab: only a running unit in Automatik
+    // follows, and only from one degree difference on (the rule of the page)
+    bool follow = request->hasArg(F("SMART")) && request->arg(F("SMART")) == "1";
+    if (!follow && smart_mode && cleanEndMillis == 0 && settings.power != NULL && strcmp(settings.power, "ON") == 0)
+    {
+      follow = fabsf(settings.temperature - hp.getRoomTemperature()) >= 1.0f;
+    }
+    const char *pick = follow ? smartPickMode(settings.temperature) : NULL;
     if (pick != NULL && (settings.mode == NULL || strcmp(settings.mode, pick) != 0))
     {
       settings.mode = pick;
@@ -4994,7 +5006,10 @@ heatpumpSettings change_states(AsyncWebServerRequest *request, heatpumpSettings 
   }
   if (update)
   {
+    // without a power argument (mode, fan, vanes) a window pause stays as it is
+    bool keepPause = !request->hasArg(F("PWRCHK")) && winKeepBegin();
     hp.setSettings(settings);
+    winKeepEnd(keepPause);
     if (hp.getSettings() == hp.getWantedSettings()) // only update it settings change
     {
       ESP_LOGW(TAG, "Same Settings to HP, Igrore");
@@ -5322,6 +5337,9 @@ void mqttCallback(const char *topic, const uint8_t *payload, const unsigned int 
   memcpy(message, payload, length);
   message[length] = '\0';
   bool update = false;
+  // target, fan and vane messages do not decide about power: they leave an
+  // open-window pause alone (power and mode messages end it)
+  bool keepPause = winKeepBegin();
   // HA topics
   // Receive power topic
   if (strcmp(topic, ha_power_set_topic.c_str()) == 0)
@@ -5425,6 +5443,7 @@ void mqttCallback(const char *topic, const uint8_t *payload, const unsigned int 
     }
     hpSendLocalState();
     hp.setTemperature(temperature_c);
+    winKeepEnd(keepPause);
     update = true;
   }
   else if (strcmp(topic, ha_fan_set_topic.c_str()) == 0)
@@ -5432,6 +5451,7 @@ void mqttCallback(const char *topic, const uint8_t *payload, const unsigned int 
     rootInfo["fan"] = message;
     hpSendLocalState();
     hp.setFanSpeed(getFanModeFromHa(message).c_str());
+    winKeepEnd(keepPause);
     update = true;
   }
   else if (strcmp(topic, ha_vane_set_topic.c_str()) == 0)
@@ -5439,6 +5459,7 @@ void mqttCallback(const char *topic, const uint8_t *payload, const unsigned int 
     rootInfo["vane"] = message;
     hpSendLocalState();
     hp.setVaneSetting(message);
+    winKeepEnd(keepPause);
     update = true;
   }
   else if (strcmp(topic, ha_wide_vane_set_topic.c_str()) == 0)
@@ -5446,6 +5467,7 @@ void mqttCallback(const char *topic, const uint8_t *payload, const unsigned int 
     rootInfo["wideVane"] = (String)message;
     hpSendLocalState();
     hp.setWideVaneSetting(message);
+    winKeepEnd(keepPause);
     update = true;
   }
 

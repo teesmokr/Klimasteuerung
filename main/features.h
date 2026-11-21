@@ -600,6 +600,29 @@ static void winClear()
   win_settle_ms = millis();
 }
 
+// A command that does not decide about power (night mode ending, a new
+// target, fan or vanes) carries the pause's own "off" along and must not end
+// the pause: ask before its setters run, confirm afterwards.
+static bool winKeepBegin()
+{
+  return win_paused && hp.getWantedSeq() == win_cmd_mark;
+}
+
+static void winKeepEnd(bool keep)
+{
+  if (keep)
+    win_cmd_mark = hp.getWantedSeq();
+}
+
+// A pause that ends with the unit off is the real end of the cooling: the
+// drying run after power-off was held back during the pause, let it start now.
+static void winCleanRearm()
+{
+  heatpumpSettings s = hpBaseSettings();
+  if (s.power != NULL && strcmp(s.power, "OFF") == 0)
+    strlcpy(clean_prev_power, "ON", sizeof(clean_prev_power));
+}
+
 // The window counts as closed again. A paused unit is switched back on - but
 // only if nobody else gave a command in the meantime: a schedule that ended,
 // "all off", a scene, the ad-hoc timer or MQTT all leave their trace in the
@@ -607,10 +630,17 @@ static void winClear()
 // stays the way that command left it.
 static void winResume()
 {
+  bool was = win_paused;
   bool ours = win_paused && hp.getWantedSeq() == win_cmd_mark;
   winClear();
-  if (!ours || !hp.isConnected())
+  if (!hp.isConnected())
     return;
+  if (!ours)
+  {
+    if (was)
+      winCleanRearm();
+    return;
+  }
   heatpumpSettings s = hpBaseSettings();
   if (s.power != NULL && strcmp(s.power, "OFF") == 0)
   {
@@ -657,6 +687,8 @@ void checkWindow()
       bool taken = (on && cleanEndMillis == 0) || (win_paused && hp.getWantedSeq() != win_cmd_mark);
       if (taken)
       {
+        if (win_paused)
+          winCleanRearm();
         winClear();
         strlcpy(win_prev_power, pw, sizeof(win_prev_power));
         strlcpy(win_prev_mode, md, sizeof(win_prev_mode));
@@ -704,14 +736,21 @@ void checkWindow()
     win_count = 0;
     return;
   }
+  if (millis() - win_settle_ms < 600000UL)
+  {
+    // the first ten minutes after a change move the temperature anyway: no
+    // samples from that time, so the look-back can never reach into it
+    win_count = 0;
+    return;
+  }
   win_ring[win_head] = (int8_t)lroundf(t * 2.0f);
   win_head = (win_head + 1) % WIN_SAMPLES;
   if (win_count < WIN_SAMPLES)
     win_count++;
-  if (millis() - win_settle_ms < 600000UL)
-    return; // the first ten minutes after a change move the temperature anyway
   uint8_t span = (uint8_t)(win_minutes * 2);
-  if (win_count <= span)
+  if (span > (uint8_t)(win_count - 1))
+    span = (uint8_t)(win_count - 1); // judge with what is there; fewer samples only see less
+  if (span == 0)
     return;
   float ext_t = t;
   for (uint8_t n = 1; n <= span; n++)
@@ -794,7 +833,7 @@ void handleApiWindow(AsyncWebServerRequest *request)
 #define SCENES_FILE KS_FS_PREFIX "scenes.json"
 #define MAX_SCENES 6
 #define MAX_SCENE_ACTIONS 6
-#define SCENES_MAX_LEN 2400
+#define SCENES_MAX_LEN 2800
 String scenes_json = "[]";
 uint8_t scene_count = 0;
 uint32_t scene_hash[MAX_SCENES]; // of the names, to refuse a tap on an outdated page
@@ -862,7 +901,7 @@ static bool scenesParse(const String &json, bool apply)
       for (size_t i = 0; i < dl; i++)
       {
         char c = d[i];
-        if (!(isalnum((unsigned char)c) || c == '.' || c == '-' || c == ':'))
+        if (!(isalnum((unsigned char)c) || c == '.' || c == '-' || c == '_' || c == ':'))
           return false; // a host name or address, nothing that could form another URL
       }
       if ((!av["m"].isNull() && !av["m"].is<const char *>()) || (!av["f"].isNull() && !av["f"].is<const char *>()))
