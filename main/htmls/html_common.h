@@ -871,6 +871,8 @@ const char html_css[] PROGMEM =
         "#ctrlcard.grp #histcard, #ctrlcard.grp .boostrow, #ctrlcard.grp .cside, #ctrlcard.grp .opline, #ctrlcard.grp #tslroom { display: none !important; }"
         ".scdevs label { display: inline-flex; align-items: center; gap: 6px; margin: 0 14px 6px 0; }"
         ".mono { font-family: monospace; font-size: .8rem; overflow-wrap: anywhere; -webkit-user-select: all; user-select: all; }"
+        ".devstate button { display: inline-block; width: auto; min-height: 34px; margin: 6px 0 0 8px; padding: 4px 14px; font-size: .85rem; font-weight: 500; }"
+        "span.dhint { display: block; margin-top: 4px; }"
         ".alloff { margin: 16px 0 0; }"
         ".navrow { margin-top: 12px; }"
 ;

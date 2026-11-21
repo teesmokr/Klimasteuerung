@@ -275,6 +275,7 @@ heatpumpSettings HeatPump::getSettings() {
 // if the unit is not already in the wanted state
 void HeatPump::wantedChanged() {
   lastWanted = ms32();
+  wantedSeq++;
   if (!firstRun && wantedSettings != currentSettings) {
     control_ac_confirm = false;
     control_ac_rty_cnt = 0;
@@ -292,6 +293,11 @@ heatpumpSettings HeatPump::getWantedSettings() {
 
 unsigned long HeatPump::getLastWanted() {
   return lastWanted;
+}
+
+// lets a caller tell whether anybody issued a command since it last looked
+uint32_t HeatPump::getWantedSeq() {
+  return wantedSeq;
 }
 
 void HeatPump::setFastSync(bool setting) {

@@ -44,7 +44,7 @@ void initOTA();
 void setDefaults();
 boolean initWifi();
 void sendWrappedHTML(AsyncWebServerRequest *request, const String &content);
-void sendWrappedHTML(AsyncWebServerRequest *request, String &&content);
+void sendWrappedHTML(AsyncWebServerRequest *request, String &&content, PGM_P tail = nullptr);
 void handleNotFound(AsyncWebServerRequest *request);
 void handleSaveWifiAndMqtt(AsyncWebServerRequest *request);
 void handleReboot(AsyncWebServerRequest *request);
@@ -379,6 +379,9 @@ void handleApiHistory(AsyncWebServerRequest *request);
 void histSave();
 void loadFeatures();
 void checkFeatures();
+void featuresBeforeRestart(bool wifiLost);
+extern bool win_paused;   // features.h: the open-window pause switched the unit off
+extern bool hist_no_save; // features.h: set by a factory reset
 void handleApiRtemp(AsyncWebServerRequest *request);
 void handleApiRsens(AsyncWebServerRequest *request);
 void handleApiWindow(AsyncWebServerRequest *request);
@@ -1412,7 +1415,9 @@ void checkAdhoc()
   if (!hp.isConnected())
     return;
   heatpumpSettings base = hpBaseSettings();
-  if (base.power != NULL && strcmp(base.power, "OFF") == 0)
+  // an open-window pause is no manual power-off: the timer keeps running, the
+  // unit carries on afterwards and is still switched off when the time is up
+  if (!win_paused && base.power != NULL && strcmp(base.power, "OFF") == 0)
   {
     adhocEndMillis = 0;
     ESP_LOGI(TAG, "Ad-hoc run ended by a manual power-off");
@@ -1625,7 +1630,8 @@ void checkHistory()
     memset(hist7E, 0, sizeof(hist7E));
     hist_ready = true;
     hist_boot_ms = millis();
-    hist_gap_pending = histLoad();
+    // a curve saved without a clock has no place in time: nothing to wait for
+    hist_gap_pending = histLoad() && hist_saved_epoch != 0;
   }
   if (hist_gap_pending)
   {
@@ -1676,7 +1682,7 @@ void checkHistory()
     on = hs.power != NULL && strcmp(hs.power, "ON") == 0;
   }
   hist[hist_head] = v;
-  histOut[hist_head] = meas_out > -100 ? (int8_t)lroundf(meas_out * 2.0f) : HIST_NONE;
+  histOut[hist_head] = measOutValid() ? (int8_t)lroundf(meas_out * 2.0f) : HIST_NONE;
   if (on)
   {
     histOn[hist_head / 8] |= (uint8_t)(1 << (hist_head % 8));
@@ -1701,7 +1707,7 @@ void checkHistory()
     hist7_cnt = 0;
     hist7[hist7_head] = avg;
     hist7On[hist7_head] = hist7_oncnt;
-    hist7Out[hist7_head] = meas_out > -100 ? (int8_t)lroundf(meas_out * 2.0f) : HIST_NONE;
+    hist7Out[hist7_head] = measOutValid() ? (int8_t)lroundf(meas_out * 2.0f) : HIST_NONE;
     // energy of this slot from the unit's counter (0.1 kWh steps)
     uint8_t de = 0;
     if (meas_kwh >= 0)
@@ -1725,8 +1731,13 @@ void handleApiHistory(AsyncWebServerRequest *request)
   const int8_t *buf = week ? hist7 : hist;
   uint16_t len = week ? HIST7_LEN : HIST_LEN;
   uint16_t head = week ? hist7_head : hist_head;
+  // outside temperature, only when the unit reports one
+  const int8_t *obuf = week ? hist7Out : histOut;
+  bool anyOut = false;
+  for (uint16_t n = 0; hist_ready && n < len && !anyOut; n++)
+    anyOut = obuf[n] != HIST_NONE;
   String json;
-  json.reserve(len * 11 + 96);
+  json.reserve(len * (anyOut ? 11 : 6) + 96);
   json += F("{\"i\":");
   json += week ? 1800 : 300;
   json += F(",\"d\":\"");
@@ -1755,11 +1766,6 @@ void handleApiHistory(AsyncWebServerRequest *request)
     json += (char)('0' + (c > 9 ? 9 : c));
   }
   json += '"';
-  // outside temperature, only when the unit reports one
-  const int8_t *obuf = week ? hist7Out : histOut;
-  bool anyOut = false;
-  for (uint16_t n = 0; hist_ready && n < len && !anyOut; n++)
-    anyOut = obuf[n] != HIST_NONE;
   if (anyOut)
   {
     json += F(",\"o\":\"");
@@ -2067,7 +2073,7 @@ void checkClean()
     // clean timer must not switch it off later
     cleanEndMillis = 0;
   }
-  else if (cleanEndMillis == 0 && clean_auto && isOff && wasOn &&
+  else if (cleanEndMillis == 0 && clean_auto && isOff && wasOn && !win_paused && // paused for an open window: it carries on soon
            (strcmp(clean_prev_mode, "COOL") == 0 || strcmp(clean_prev_mode, "DRY") == 0 || strcmp(clean_prev_mode, "AUTO") == 0))
   {
     ESP_LOGI(TAG, "Power off after cooling, starting clean run (%u min)", clean_minutes);
@@ -2734,7 +2740,8 @@ void sendWrappedHTML(AsyncWebServerRequest *request, const String &content)
 
 // takes over the page body instead of copying it: on the ESP8266 the copy was
 // the largest single allocation of a page build
-void sendWrappedHTML(AsyncWebServerRequest *request, String &&content)
+// tail: optional second part of the body that stays in flash (no placeholders)
+void sendWrappedHTML(AsyncWebServerRequest *request, String &&content, PGM_P tail)
 {
   if (content.isEmpty())
   {
@@ -2763,8 +2770,10 @@ void sendWrappedHTML(AsyncWebServerRequest *request, String &&content)
   response.replace(F("_KS_VERSION_"), ks_version); // cache-busts /style.css after updates
 
 #ifdef ESP32
-  response.reserve(response.length() + content.length() + footer.length() + 1); // avoid realloc churn
+  response.reserve(response.length() + content.length() + (tail != nullptr ? strlen_P(tail) : 0) + footer.length() + 1); // avoid realloc churn
   response += content;
+  if (tail != nullptr)
+    response += FPSTR(tail);
   response += footer;
   request->send(200, "text/html", response);
 #else
@@ -2773,7 +2782,11 @@ void sendWrappedHTML(AsyncWebServerRequest *request, String &&content)
   // large allocation is what a busy/fragmented ESP8266 heap fails to provide
   // (UI freezes / OOM on page switches, issue #6)
   static String chunkHead, chunkBody, chunkFoot;
+  static PGM_P chunkTail = nullptr; // body part read from flash while streaming
+  static size_t chunkTailLen = 0;
   size_t lenH = response.length(), lenB = content.length(), lenF = footer.length();
+  chunkTail = tail;
+  chunkTailLen = tail != nullptr ? strlen_P(tail) : 0;
   // free the previous page first so the copy below gets the best chance,
   // then take header/footer without copying (they are locals)
   chunkHead = String();
@@ -2796,7 +2809,8 @@ void sendWrappedHTML(AsyncWebServerRequest *request, String &&content)
       [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
         size_t e1 = chunkHead.length();
         size_t e2 = e1 + chunkBody.length();
-        size_t total = e2 + chunkFoot.length();
+        size_t e3 = e2 + chunkTailLen;
+        size_t total = e3 + chunkFoot.length();
         if (index >= total)
         {
           // done streaming: release the buffers right away instead of
@@ -2806,13 +2820,15 @@ void sendWrappedHTML(AsyncWebServerRequest *request, String &&content)
           chunkHead = String();
           chunkBody = String();
           chunkFoot = String();
+          chunkTail = nullptr;
+          chunkTailLen = 0;
           return 0;
         }
         size_t n = 0;
         while (n < maxLen && index + n < total)
         {
           size_t pos = index + n;
-          const String *src;
+          const String *src = nullptr; // nullptr = the flash part
           size_t off, segEnd;
           if (pos < e1)
           {
@@ -2826,16 +2842,24 @@ void sendWrappedHTML(AsyncWebServerRequest *request, String &&content)
             off = pos - e1;
             segEnd = e2;
           }
+          else if (pos < e3)
+          {
+            off = pos - e2;
+            segEnd = e3;
+          }
           else
           {
             src = &chunkFoot;
-            off = pos - e2;
+            off = pos - e3;
             segEnd = total;
           }
           size_t run = segEnd - pos;
           if (run > maxLen - n)
             run = maxLen - n;
-          memcpy(buffer + n, src->c_str() + off, run);
+          if (src != nullptr)
+            memcpy(buffer + n, src->c_str() + off, run);
+          else
+            memcpy_P(buffer + n, chunkTail + off, run);
           n += run;
         }
         return n;
@@ -3522,7 +3546,7 @@ void handleApiStatus(AsyncWebServerRequest *request)
     json += F(",\"cf\":");
     json += st.compressorFrequency;
   }
-  if (meas_power_w >= 0)
+  if (measPowerValid())
   {
     json += F(",\"pw\":");
     json += meas_power_w;
@@ -3532,7 +3556,7 @@ void handleApiStatus(AsyncWebServerRequest *request)
     json += F(",\"kwh\":");
     json += String(meas_kwh, 1);
   }
-  if (meas_out > -100)
+  if (measOutValid())
   {
     json += F(",\"out\":");
     json += String(convertCelsiusToLocalUnit(meas_out, useFahrenheit), 1);
@@ -3916,7 +3940,7 @@ void checkGitUpdate()
 #ifdef ESP32
     WiFiClientSecure client;
     client.setInsecure();
-    histSave(); // keep the curve across the update
+    featuresBeforeRestart(false); // the update restarts the module by itself
     httpUpdate.rebootOnUpdate(true);
     httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
     t_httpUpdate_return ret = httpUpdate.update(client, url);
@@ -3926,7 +3950,7 @@ void checkGitUpdate()
     // no MFLN here: the download gets redirected to a different asset host
     // that may not accept the negotiated small buffer
     client.setBufferSizes(16384, 512); // small TX buffer halves the TLS RAM need
-    histSave(); // keep the curve across the update
+    featuresBeforeRestart(false); // the update restarts the module by itself
     ESPhttpUpdate.rebootOnUpdate(true);
     ESPhttpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
     t_httpUpdate_return ret = ESPhttpUpdate.update(client, url);
@@ -4010,11 +4034,11 @@ void handleTimers(AsyncWebServerRequest *request)
   {
     return;
   }
-  String timersPage = FPSTR(timers_script);
-  timersPage += FPSTR(html_page_timers);
-  timersPage.replace(F("_TXT_BACK_"), translatedWord(FL_(txt_back)));
-  timersPage.replace(F("_KS_VERSION_"), ks_version);
-  sendWrappedHTML(request, std::move(timersPage));
+  // the page body has no placeholders: it is sent straight from flash instead
+  // of through a 12 KB copy on the heap (the largest block a page ever needed)
+  String timersHead = FPSTR(timers_script);
+  timersHead.replace(F("_KS_VERSION_"), ks_version);
+  sendWrappedHTML(request, std::move(timersHead), html_page_timers);
 }
 
 void handleDevicesPage(AsyncWebServerRequest *request)
@@ -4840,7 +4864,6 @@ void handleUploadLoop(AsyncWebServerRequest *request, const String& filename, si
   if (!index)
   {
     ESP_LOGD(TAG, "Starting OTA Update");
-    histSave(); // keep the curve across the update
     // save cpu by disconnect/stop retry mqtt server
     if (mqttClient != nullptr && mqttClient->connected())
     {
@@ -4938,6 +4961,17 @@ heatpumpSettings change_states(AsyncWebServerRequest *request, heatpumpSettings 
     if (new_temp != settings.temperature)
     {
       settings.temperature = new_temp;
+      update = true;
+    }
+  }
+  // Automatik asked for from another unit (scene, group): this unit knows its
+  // own room temperature and picks heating or cooling itself
+  if (request->hasArg(F("SMARTPICK")) && !request->hasArg(F("MODE")))
+  {
+    const char *pick = smartPickMode(settings.temperature);
+    if (pick != NULL && (settings.mode == NULL || strcmp(settings.mode, pick) != 0))
+    {
+      settings.mode = pick;
       update = true;
     }
   }
@@ -5418,7 +5452,12 @@ void mqttCallback(const char *topic, const uint8_t *payload, const unsigned int 
   else if (strcmp(topic, ha_remote_temp_set_topic.c_str()) == 0)
   {
     float temperature = strtof(message, NULL);
-    if (temperature == 0)
+    if (rsens_mode != 0)
+    {
+      // the room sensor set up in the web UI owns the remote temperature;
+      // two sources would overwrite each other within the same minute
+    }
+    else if (temperature == 0)
     {                           // Remote temp disabled by mqtt topic set
       remoteTempActive = false; // clear the remote temp flag
       hp.setRemoteTemperature(0.0);
@@ -6183,6 +6222,7 @@ void loop()
   else if (wifi_config and (long)(millis() - (wifi_timeout)) > 0)
   {
     ESP_LOGD(TAG, "Wifi connect timeout, restart device now");
+    featuresBeforeRestart(true);
     ESP.restart();
   }
   // Sync HVAC UNIT even if mqtt not connected
@@ -6258,7 +6298,6 @@ void loop()
 // Reboot in nextSeconds in the future
 void sendRebootRequest(unsigned long nextSeconds)
 {
-  histSave(); // keep the curve across the restart
   requestReboot = true;
   requestRebootTime = millis() + nextSeconds * 1000L;
   ESP_LOGI(TAG, "Send Reboot Request");
@@ -6271,6 +6310,7 @@ void checkRebootRequest()
     requestReboot = false;
     requestRebootTime = 0;
     ESP_LOGI(TAG, "Restart device from request");
+    featuresBeforeRestart(false);
     ESP.restart();
   }
 }
@@ -6825,6 +6865,7 @@ String getValueBySeparator(const String& data, char separator, int index)
 
 void factoryReset()
 {
+  hist_no_save = true; // nothing may be written back onto the empty filesystem
   SPIFFS.format();
   WiFi.disconnect(true, true);
 #ifdef ESP32
